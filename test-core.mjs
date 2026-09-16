@@ -114,6 +114,7 @@ console.log("core: import, scoring and deterministic activity selection pass");
 
 // --- Proefexamen-sessies A/B: start → hervat na reload → inleveren (5/6-grens en gate) ---
 import { EXAM_SIZE, examQuestionIds, formatExamClock, startExam, submitExam } from "./core.mjs";
+import { examLockReason, isExamQuestionAnswered, recordExamAnswer } from "./core.mjs";
 
 const examCodes = {
   G: ["G1", "G2", "G3", "G4", "G5", "G7"],
@@ -272,3 +273,30 @@ assert.equal(formatExamClock(0), "0:00", "klok start op 0:00");
 assert.equal(formatExamClock(65), "1:05", "klok toont mm:ss");
 assert.equal(formatExamClock(5400), "90:00", "richttijd is 90:00");
 console.log("exam-sessies: start, hervat, blokkade, inleveren, 5/6-grens, gate en importvalidatie pass");
+
+// Nuance A — zichtbare vergrendelde A/B-kaarten: locked-reden bij dichte gate / B-blokkade vóór A-inleveren.
+assert.match(examLockReason(freshExamState(), examBank, "A"), /start pas als alle oefendoelen toetsklaar of beheerst zijn \(nog 2 te gaan\)/, "gate dicht: A vergrendeld met N");
+assert.match(examLockReason(freshExamState(), examBank, "B"), /start pas na het inleveren van proefexamen A/, "gate dicht: B geblokkeerd vóór A-inleveren");
+assert.equal(examLockReason(masteredExamState(), examBank, "A"), null, "gate open: A startbaar, geen lock");
+assert.match(examLockReason(masteredExamState(), examBank, "B"), /start pas na het inleveren van proefexamen A/, "B-blokkade vóór A-inleveren");
+assert.equal(examLockReason(reloaded, examBank, "A"), null, "open sessie A is niet vergrendeld");
+assert.match(examLockReason(reloaded, examBank, "B"), /start pas na het inleveren van proefexamen A/, "B vergrendeld zolang A openstaat");
+const afterAOnly = { ...masteredExamState(), exams: { A: examState.exams.A, B: null } };
+assert.equal(examLockReason(afterAOnly, examBank, "B"), null, "na inleveren A is B startbaar, geen lock");
+assert.equal(examLockReason(examState, examBank, "A"), null, "ingeleverde A toont resultaat, geen lock");
+assert.equal(examLockReason(examState, examBank, "B"), null, "ingeleverde B toont resultaat, geen lock");
+
+// Nuance B — examen-feedback over reload: beantwoord-status uit session.answers, identiek opslaan zonder extra elapsed.
+assert.equal(isExamQuestionAnswered(reloaded.exams.A, firstId), true, "reload-hervatting: beantwoorde vraag toont beantwoord-status");
+assert.equal(isExamQuestionAnswered(reloaded.exams.A, sessionA.question_ids[1]), false, "open vraag blijft open na reload");
+const elapsedBeforeIdentical = reloaded.exams.A.elapsed_seconds;
+const identicalResult = recordExamAnswer(reloaded.exams.A, firstId, firstQuestion.answer, 30);
+assert.equal(identicalResult.identical, true, "identiek antwoord herkend");
+assert.equal(identicalResult.addedSeconds, 0, "identiek antwoord telt 0 seconden bij");
+assert.equal(reloaded.exams.A.elapsed_seconds, elapsedBeforeIdentical, "identiek opnieuw opslaan telt geen extra elapsed");
+assert.deepEqual(reloaded.exams.A.answers[firstId].answer, firstQuestion.answer, "identiek opslaan verliest geen antwoord");
+const changedResult = recordExamAnswer(reloaded.exams.A, firstId, firstQuestion.answer + 999, 30);
+assert.equal(changedResult.identical, false, "gewijzigd antwoord herkend als wijziging");
+assert.equal(changedResult.addedSeconds, 30, "gewijzigd antwoord telt delta mee");
+assert.equal(reloaded.exams.A.elapsed_seconds, elapsedBeforeIdentical + 30, "alleen bij gewijzigd antwoord de nieuwe delta optellen");
+console.log("exam-nuances: vergrendelde A/B-redenen en reload-feedback met idempotente elapsed pass");

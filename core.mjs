@@ -76,6 +76,58 @@ function examGate(state, available) {
 }
 
 /**
+ * Informatieve vergrendelreden per proefexamen voor Vandaag, of null als het
+ * examen startbaar, actief of ingeleverd is. A toont de gate-reden met N,
+ * B toont zolang A niet is ingeleverd de B-blokkade.
+ */
+export function examLockReason(state, questions, examId) {
+  if (!["A", "B"].includes(examId)) throw new TypeError("Onbekend proefexamen.");
+  const session = state?.exams?.[examId];
+  if (session?.submitted_at && session?.result) return null;
+  if (session && !session.submitted_at) return null;
+  if (examId === "B" && !state?.exams?.A?.submitted_at) return "start pas na het inleveren van proefexamen A";
+  if (!isObject(state?.learner) || !Array.isArray(questions)) return null;
+  const gate = examGate(state, eligible(questions, state));
+  if (!gate.ok) return `start pas als alle oefendoelen toetsklaar of beheerst zijn (nog ${gate.missing.length} te gaan)`;
+  return null;
+}
+
+/** True als voor deze examenvraag al een antwoord in de sessie staat. */
+export function isExamQuestionAnswered(session, questionId) {
+  if (!isObject(session) || typeof questionId !== "string") return false;
+  return Object.hasOwn(session.answers ?? {}, questionId);
+}
+
+function examStoredValue(session, questionId) {
+  const stored = session?.answers?.[questionId];
+  if (stored === undefined) return undefined;
+  return isObject(stored) && "answer" in stored ? stored.answer : stored;
+}
+
+/**
+ * Bewaart een examenantwoord idempotent: bij een IDENTIEK antwoord (zelfde
+ * genormaliseerde waarde als opgeslagen) wordt geen extra elapsed_seconds
+ * bijgeteld; alleen bij een gewijzigd antwoord telt de nieuwe delta mee.
+ * Antwoorden blijven overschrijfbaar zonder dataverlies.
+ */
+export function recordExamAnswer(session, questionId, answerValue, secondsDelta, now = new Date()) {
+  if (!isObject(session)) throw new TypeError("Examensessie ontbreekt.");
+  if (typeof questionId !== "string") throw new TypeError("Ongeldige examenvraag.");
+  if (!isObject(session.answers)) session.answers = {};
+  const prev = examStoredValue(session, questionId);
+  const identical = prev !== undefined && String(prev) === String(answerValue);
+  const delta = Math.max(0, Math.floor(Number(secondsDelta) || 0));
+  if (identical) return { identical: true, addedSeconds: 0 };
+  session.answers[questionId] = {
+    answer: answerValue,
+    at: (now instanceof Date ? now : new Date(now)).toISOString(),
+    seconds: delta,
+  };
+  session.elapsed_seconds = (session.elapsed_seconds ?? 0) + delta;
+  return { identical: false, addedSeconds: delta };
+}
+
+/**
  * Start proefexamen A of B. Gooit bij een gesloten gate, een vroege B-start
  * of een onvolledige examenbank. De gebouwde volgorde muteert daarna nooit.
  */

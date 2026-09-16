@@ -1,4 +1,4 @@
-import { EXAM_GUIDELINE_SECONDS, formatExamClock, importState, nextActivity, scoreAnswer, startExam, submitExam } from "./core.mjs";
+import { EXAM_GUIDELINE_SECONDS, examLockReason, formatExamClock, importState, isExamQuestionAnswered, nextActivity, recordExamAnswer, scoreAnswer, startExam, submitExam } from "./core.mjs";
 
 const STORAGE_KEY = "rekenen-state-v1";
 const domainNames = { B: "Basis", G: "Grootheden en eenheden", R: "2D en 3D", V: "Verhoudingen", P: "Procenten", K: "Grafieken en tabellen" };
@@ -83,11 +83,12 @@ function renderOnboarding() {
 function renderToday() {
   const next = nextActivity(state, questions);
   const results = ["A", "B"].map((examId) => examResultCard(examId, state.exams?.[examId])).join("");
+  const locked = ["A", "B"].map((examId) => examLockedCard(examId)).join("");
   if (!next) {
     const pending = state.mastery.filter((item) => item.next_review_at).sort((a, b) => a.next_review_at.localeCompare(b.next_review_at))[0];
     return pending
-      ? `${results}<p class="eyebrow">Vandaag</p><h1>Goed gewerkt</h1><div class="card"><h2>Volgende hertoets</h2><p>Je volgende korte herhaling staat gepland voor ${new Date(`${pending.next_review_at}T12:00:00`).toLocaleDateString("nl-NL")}.</p><button data-route="voortgang">Bekijk voortgang</button></div>`
-      : `${results}<p class="eyebrow">Vandaag</p><h1>Alle onderdelen zijn afgerond</h1><div class="card"><p>Bekijk je voortgang of exporteer je resultaten bij Begeleider.</p></div>`;
+      ? `${results}${locked}<p class="eyebrow">Vandaag</p><h1>Goed gewerkt</h1><div class="card"><h2>Volgende hertoets</h2><p>Je volgende korte herhaling staat gepland voor ${new Date(`${pending.next_review_at}T12:00:00`).toLocaleDateString("nl-NL")}.</p><button data-route="voortgang">Bekijk voortgang</button></div>`
+      : `${results}${locked}<p class="eyebrow">Vandaag</p><h1>Alle onderdelen zijn afgerond</h1><div class="card"><p>Bekijk je voortgang of exporteer je resultaten bij Begeleider.</p></div>`;
   }
   if (next.phase === "exam" && next.exam) {
     const session = state.exams?.[next.exam];
@@ -96,12 +97,12 @@ function renderToday() {
     const status = open
       ? `Vraag ${session.current_index + 1} van ${session.question_ids.length} · ${formatExamClock(session.elapsed_seconds ?? 0)} / richtijd 90:00`
       : "30 vragen · 6 per domein · richtijd 90:00 · geen hints of feedback tijdens het examen";
-    return `${results}<p class="eyebrow">Vandaag</p><h1>${title}</h1><div class="card"><p class="lesson-meta">Proefexamen ${next.exam}</p><h2>${title}</h2><p>${escapeHtml(status)}</p><button data-route="leren">Ga verder</button></div>`;
+    return `${results}${locked}<p class="eyebrow">Vandaag</p><h1>${title}</h1><div class="card"><p class="lesson-meta">Proefexamen ${next.exam}</p><h2>${title}</h2><p>${escapeHtml(status)}</p><button data-route="leren">Ga verder</button></div>`;
   }
   const code = next.objective ?? next.question.objective_codes[0];
   const objective = objectiveByCode.get(code);
   const title = next.phase === "diagnostic" ? "Ga verder met de nulmeting" : next.phase === "recovery" ? "Herstel één denkstap" : next.phase === "review" ? "Tijd voor een hertoets" : next.phase === "exam" ? `Proefexamen ${next.exam ?? next.question.exam ?? ""}`.trim() : "Volgende leerdoel";
-  return `<p class="eyebrow">Vandaag</p><h1>${title}</h1><div class="card"><p class="lesson-meta">${escapeHtml(code)} · ${escapeHtml(domainNames[next.question.domain] ?? objective?.domain)}</p><h2>${escapeHtml(objective?.title ?? next.question.prompt)}</h2><p>${escapeHtml(next.phase === "diagnostic" ? `Vraag ${state.diagnosticIndex + 1} van ${diagnosticCount()}` : objective?.plain_explanation ?? "Je volgende vraag staat klaar.")}</p><button data-route="leren">Ga verder</button></div>`;
+  return `${results}${locked}<p class="eyebrow">Vandaag</p><h1>${title}</h1><div class="card"><p class="lesson-meta">${escapeHtml(code)} · ${escapeHtml(domainNames[next.question.domain] ?? objective?.domain)}</p><h2>${escapeHtml(objective?.title ?? next.question.prompt)}</h2><p>${escapeHtml(next.phase === "diagnostic" ? `Vraag ${state.diagnosticIndex + 1} van ${diagnosticCount()}` : objective?.plain_explanation ?? "Je volgende vraag staat klaar.")}</p><button data-route="leren">Ga verder</button></div>`;
 }
 
 function renderActivity() {
@@ -158,13 +159,28 @@ function examQuestionView(next, session) {
   const question = questionById.get(session.question_ids[index]);
   if (!question) return `<p class="eyebrow">Proefexamen ${next.exam}</p><h1>Antwoord kan niet worden getoond</h1><div class="actions"><button data-route="vandaag">Bewaar en stop</button></div>`;
   const answered = Object.keys(session.answers ?? {}).length;
-  const done = state.feedback?.questionId === question.id && !state.feedback.empty;
+  const feedbackDone = state.feedback?.questionId === question.id && !state.feedback.empty;
   const emptyError = state.feedback?.questionId === question.id && state.feedback.empty;
   const draft = state.drafts[question.id] ?? "";
+  const hasStoredAnswer = isExamQuestionAnswered(session, question.id);
+  let draftDiffers = false;
+  if (hasStoredAnswer && !emptyError && draft !== "" && draft != null) {
+    const storedRaw = session.answers[question.id];
+    const storedValue = storedRaw != null && typeof storedRaw === "object" && "answer" in storedRaw ? storedRaw.answer : storedRaw;
+    try {
+      const normalized = scoreAnswer(question, draft);
+      draftDiffers = normalized.value === null
+        ? String(draft).trim() !== String(storedValue ?? "").trim()
+        : String(normalized.value) !== String(storedValue);
+    } catch { draftDiffers = String(draft) !== String(storedValue); }
+  }
+  const storedDone = hasStoredAnswer && !draftDiffers;
+  const done = feedbackDone || storedDone;
   const answer = question.type === "choice"
     ? `<div class="stack">${question.options.map((option) => `<button class="choice answer" data-answer="${escapeHtml(option)}" aria-pressed="${String(draft) === String(option)}">${escapeHtml(option)}</button>`).join("")}</div>`
     : `<div class="field"><label for="answer">Jouw antwoord${question.unit ? ` in ${escapeHtml(question.unit)}` : ""}</label><input id="answer" inputmode="decimal" autocomplete="off" value="${escapeHtml(draft)}"></div>`;
-  const feedback = done || emptyError ? `<div class="feedback ${emptyError ? "error" : ""}" role="status"><strong>${emptyError ? "Nog niet." : "Opgeslagen."}</strong> ${escapeHtml(state.feedback.text)}</div>` : "";
+  const storedFeedbackText = "Antwoord opgeslagen. De uitslag volgt na het proefexamen.";
+  const feedback = done || emptyError ? `<div class="feedback ${emptyError ? "error" : ""}" role="status"><strong>${emptyError ? "Nog niet." : "Opgeslagen."}</strong> ${escapeHtml(emptyError ? state.feedback.text : feedbackDone ? state.feedback.text : storedFeedbackText)}</div>` : "";
   const elapsed = session.elapsed_seconds ?? 0;
   const timerText = elapsed >= EXAM_GUIDELINE_SECONDS ? "richttijd voorbij, maak rustig af" : `${formatExamClock(elapsed)} / richtijd 90:00`;
   const allAnswered = session.question_ids.every((qid) => Object.hasOwn(session.answers ?? {}, qid));
@@ -198,6 +214,12 @@ function examResultCard(examId, session) {
   return `<section class="card"><h2>Proefexamen ${examId}: ${verdict} (${session.result.total_pct}%)</h2>${examResultTable(session)}<p>${escapeHtml(examAdvice(examId, session))}</p></section>`;
 }
 
+function examLockedCard(examId) {
+  const reason = examLockReason(state, questions, examId);
+  if (!reason) return "";
+  return `<section class="card"><h2>Proefexamen ${examId}: vergrendeld</h2><p>${escapeHtml(reason)}</p></section>`;
+}
+
 function examResultView(examId, session) {
   return `<p class="eyebrow">Proefexamen ${examId}</p><h1>Uitslag proefexamen ${examId}</h1>${examResultCard(examId, session)}<div class="actions"><button data-route="vandaag">Terug naar vandaag</button></div>`;
 }
@@ -225,8 +247,25 @@ function startExamTimer(session) {
 function manageExamTimer() {
   const current = state.learner ? activity() : null;
   const session = current?.phase === "exam" && current?.exam ? state.exams?.[current.exam] : null;
-  if (session && !session.submitted_at && !state.feedback?.questionId && document.querySelector("#exam-timer")) startExamTimer(session);
-  else stopExamTimer();
+  if (!session || session.submitted_at || state.feedback?.questionId || !document.querySelector("#exam-timer")) { stopExamTimer(); return; }
+  const qid = session.question_ids[session.current_index];
+  if (qid != null && isExamQuestionAnswered(session, qid)) {
+    const draft = state.drafts[qid] ?? "";
+    if (draft === "" || draft == null) { stopExamTimer(); return; }
+    const question = questionById.get(qid);
+    if (question) {
+      try {
+        const storedRaw = session.answers[qid];
+        const storedValue = storedRaw != null && typeof storedRaw === "object" && "answer" in storedRaw ? storedRaw.answer : storedRaw;
+        const normalized = scoreAnswer(question, draft);
+        const differs = normalized.value === null
+          ? String(draft).trim() !== String(storedValue ?? "").trim()
+          : String(normalized.value) !== String(storedValue);
+        if (!differs) { stopExamTimer(); return; }
+      } catch { stopExamTimer(); return; }
+    } else { stopExamTimer(); return; }
+  }
+  startExamTimer(session);
 }
 
 function visualFor(question) {
@@ -503,7 +542,9 @@ function bindEvents() {
   document.querySelector("#answer")?.addEventListener("keydown", (event) => { if (event.key === "Enter") checkCurrentAnswer(); });
   document.querySelector("#check-answer")?.addEventListener("click", checkCurrentAnswer);
   document.querySelector("#next-activity")?.addEventListener("click", () => {
-    const examId = state.feedback?.phase === "exam" ? state.feedback?.exam : null;
+    const fromFeedback = state.feedback?.phase === "exam" ? state.feedback?.exam : null;
+    const fallback = fromFeedback ? null : activity();
+    const examId = fromFeedback ?? (fallback?.phase === "exam" ? fallback?.exam : null);
     const session = examId ? state.exams?.[examId] : null;
     if (session && !session.submitted_at && session.current_index < session.question_ids.length - 1) session.current_index += 1;
     state.feedback = null; saveState(); render();
@@ -538,8 +579,7 @@ function checkCurrentAnswer() {
   if (examSession && !examSession.submitted_at) {
     const nowMs = Date.now();
     const seconds = examTickQid === question.id && examTickStart ? Math.max(0, Math.round((examTickCarryMs + nowMs - examTickStart) / 1000)) : 0;
-    examSession.answers[question.id] = { answer: result.value, at: new Date().toISOString(), seconds };
-    examSession.elapsed_seconds = (examSession.elapsed_seconds ?? 0) + seconds;
+    recordExamAnswer(examSession, question.id, result.value, seconds);
     examTickQid = null; examTickCarryMs = 0; examTickStart = 0;
   }
   const hiddenResult = ["diagnostic", "exam"].includes(phase);
