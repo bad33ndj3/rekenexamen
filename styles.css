@@ -81,8 +81,10 @@ small { color: #56616b; }
 .bottom-nav button { min-width: 0; padding: 8px 4px; background: transparent; color: #17212b; font-size: .82rem; line-height: 1.15; overflow-wrap: anywhere; }
 .bottom-nav button[aria-current="page"] { background: #e9f3f1; color: var(--primary); }
 .question-figure, figure img, .figure-image { display: block; width: 100%; max-width: 100%; height: auto; border: 1px solid var(--line); border-radius: 10px; margin: 8px 0 16px; }
+.question-figure text { font-family: inherit; }
 figure { max-width: 100%; margin: 16px 0; }
 figcaption { color: #56616b; font-size: .88rem; }
+.data-table caption { text-align: left; font-weight: 700; color: #56616b; font-size: .9rem; padding: 0 2px 8px; }
 
 /* Tables stay readable rather than creating an app-wide horizontal scroll. */
 #app table, .data-table { width: 100%; table-layout: fixed; border-collapse: collapse; margin: 16px 0; background: var(--surface); }
