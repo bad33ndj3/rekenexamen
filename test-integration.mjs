@@ -79,6 +79,9 @@ assert(level4Practice.some((question) => question.id === "K10-N4-001"), "niveau-
 const app = await readFile(new URL("app.js", import.meta.url), "utf8");
 for (const route of ["vandaag", "leren", "voortgang", "begeleider"]) assert(app.includes(route), `route ontbreekt: ${route}`);
 for (const feature of ["localStorage", "importFile", "exportJson", "exportCsv"]) assert(app.includes(feature), `functie ontbreekt: ${feature}`);
+for (const marker of ["Bewaar kopie", "Stuur naar begeleider", "Zet terug", "save-copy", "share-coach", "share-status", "canShare", "clipboard.writeText", "persist", "Bestanden/Downloads"]) assert(app.includes(marker), `bewaar/deel-functie ontbreekt in app.js: ${marker}`);
+assert.match(app, /rekenen-voortgang-.*\.json/, "bewaarkopie gebruikt bestandsnaam met datum");
+assert.match(app, /Delen kan hier niet — gebruik Bewaar kopie/, "deel-fallback toont instructietekst");
 
 console.log("integration: echte export hervat bij K10; 58 doelen, routes en opslagfuncties aanwezig");
 

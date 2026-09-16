@@ -534,8 +534,8 @@ function renderProgress() {
 
 function renderCoach() {
   const attempts = state.attempts.slice(-10).reverse();
-  return `<p class="eyebrow">Begeleider</p><h1>Voortgang beheren</h1><div class="card"><p><strong>${state.attempts.length}</strong> pogingen opgeslagen op dit apparaat.</p><div class="actions two"><button id="export-json">Exporteer JSON</button><button class="secondary" id="export-csv">Exporteer CSV</button></div></div>
-    <div class="card"><h2>Voortgang herstellen</h2><p>Importeren vervangt de huidige voortgang pas nadat het hele bestand geldig is.</p><button id="open-import">Importeer JSON</button><input id="import-file" type="file" accept="application/json,.json" hidden><p id="import-status" role="status"></p></div><h2>Laatste pogingen</h2>${attempts.length ? attempts.map((attempt) => `<article class="attempt-card"><strong>${escapeHtml(attempt.objective)}</strong> · ${attempt.correct ? "goed" : "nog oefenen"}<br><small>${new Date(attempt.at).toLocaleString("nl-NL")}</small></article>`).join("") : "<p>Nog geen pogingen.</p>"}<button class="secondary" id="reset">Begin opnieuw</button>`;
+  return `<p class="eyebrow">Begeleider</p><h1>Voortgang beheren</h1><div class="card"><p><strong>${state.attempts.length}</strong> pogingen opgeslagen op dit apparaat.</p><div class="actions two"><button id="export-json">Exporteer JSON</button><button class="secondary" id="export-csv">Exporteer CSV</button><button class="secondary" id="save-copy">Bewaar kopie</button><button class="secondary" id="share-coach">Stuur naar begeleider</button></div><p><small>De kopie komt in Bestanden/Downloads terecht; de app bewaart ook automatisch in dit apparaat.</small></p><p id="share-status" role="status"></p></div>
+    <div class="card"><h2>Voortgang herstellen</h2><p>Importeren vervangt de huidige voortgang pas nadat het hele bestand geldig is.</p><button id="open-import">Zet terug</button><input id="import-file" type="file" accept="application/json,.json" hidden><p id="import-status" role="status"></p></div><h2>Laatste pogingen</h2>${attempts.length ? attempts.map((attempt) => `<article class="attempt-card"><strong>${escapeHtml(attempt.objective)}</strong> · ${attempt.correct ? "goed" : "nog oefenen"}<br><small>${new Date(attempt.at).toLocaleString("nl-NL")}</small></article>`).join("") : "<p>Nog geen pogingen.</p>"}<button class="secondary" id="reset">Begin opnieuw</button>`;
 }
 
 function bindEvents() {
@@ -573,6 +573,8 @@ function bindEvents() {
   document.querySelector("#import-file")?.addEventListener("change", importFile);
   document.querySelector("#export-json")?.addEventListener("click", exportJson);
   document.querySelector("#export-csv")?.addEventListener("click", exportCsv);
+  document.querySelector("#save-copy")?.addEventListener("click", saveCopy);
+  document.querySelector("#share-coach")?.addEventListener("click", shareToCoach);
   document.querySelector("#reset")?.addEventListener("click", () => { if (confirm("Alle lokale voortgang wissen en opnieuw beginnen?")) { localStorage.removeItem(STORAGE_KEY); state = structuredClone(blankState); location.hash = "#/"; render(); } });
 }
 
@@ -952,7 +954,51 @@ async function importFile(event) {
   try { const source = JSON.parse(await event.target.files[0].text()); state = { ...blankState, ...importState(source, questions), drafts: {} }; saveState(); location.hash = "#/vandaag"; render(); }
   catch (error) { if (status) status.textContent = `Niet geïmporteerd: ${error.message}`; event.target.value = ""; }
 }
-function exportJson() { download("rekenen-voortgang.json", JSON.stringify({ schema_version: 1, exported_at: new Date().toISOString(), ...state }, null, 2), "application/json"); }
+function progressJsonText() { return JSON.stringify({ schema_version: 1, exported_at: new Date().toISOString(), ...state }, null, 2); }
+function exportJson() { download("rekenen-voortgang.json", progressJsonText(), "application/json"); }
+function datedBackupName() { return `rekenen-voortgang-${new Date().toISOString().slice(0, 10).replaceAll("-", "")}.json`; }
+function saveCopy() { download(datedBackupName(), progressJsonText(), "application/json"); }
+async function shareToCoach() {
+  const status = document.querySelector("#share-status");
+  const showStatus = (message) => { if (status) status.textContent = message; };
+  let text = "";
+  let filename = "rekenen-voortgang.json";
+  try {
+    text = progressJsonText();
+    filename = datedBackupName();
+  } catch { return; }
+  const fallbackToClipboard = async () => {
+    try { if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(text); } catch { /* klembord mislukt: toon toch de instructie */ }
+    showStatus("Delen kan hier niet — gebruik Bewaar kopie en stuur het bestand door");
+  };
+  try {
+    if (navigator.share && navigator.canShare) {
+      let shared = false;
+      try {
+        const jsonFile = new File([text], filename, { type: "application/json" });
+        if (navigator.canShare({ files: [jsonFile] })) {
+          await navigator.share({ files: [jsonFile], title: "Voortgang rekenen", text: "Voortgang van de rekenapp" });
+          shared = true;
+        }
+      } catch (error) { if (error?.name === "AbortError") return; }
+      if (!shared) {
+        try {
+          const txtFile = new File([text], filename.replace(/\.json$/, ".txt"), { type: "text/plain" });
+          if (navigator.canShare({ files: [txtFile] })) {
+            await navigator.share({ files: [txtFile], title: "Voortgang rekenen", text: "Voortgang van de rekenapp" });
+            shared = true;
+          }
+        } catch (error) { if (error?.name === "AbortError") return; }
+      }
+      if (!shared) await fallbackToClipboard();
+      return;
+    }
+    await fallbackToClipboard();
+  } catch (error) {
+    if (error?.name === "AbortError") return;
+    await fallbackToClipboard();
+  }
+}
 function exportCsv() {
   const header = "question_id,objective,domain,kind,correct,answer,at,independent";
   const rows = state.attempts.map((attempt) => [attempt.question_id, attempt.objective, attempt.domain, attempt.kind ?? "", attempt.correct, JSON.stringify(attempt.answer), attempt.at, attempt.independent].map(csvCell).join(","));
@@ -964,6 +1010,11 @@ function csvCell(value) {
   return /[",\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
 }
 function download(filename, body, type) { const url = URL.createObjectURL(new Blob([body], { type })); const link = document.createElement("a"); link.href = url; link.download = filename; link.click(); URL.revokeObjectURL(url); }
+
+function requestPersistentStorage() {
+  try { navigator.storage?.persist?.()?.catch?.(() => {}); } catch { /* best-effort tegen wissen op iOS; resultaat negeren */ }
+}
+requestPersistentStorage();
 
 addEventListener("hashchange", render);
 document.addEventListener("visibilitychange", () => {
