@@ -113,3 +113,40 @@ figcaption { color: #56616b; font-size: .88rem; }
 
 @media (hover: hover) { button:not(:disabled):hover, .button:not([aria-disabled="true"]):hover { filter: brightness(.94); } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; } }
+
+/* Rekenmachine als inschuifpaneel van rechts (alleen tijdens proefexamen). */
+.calc-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: min(340px, calc(100vw - 24px));
+  height: 100dvh;
+  overflow-y: auto;
+  padding: 16px 16px calc(20px + env(safe-area-inset-bottom));
+  background: var(--surface);
+  border-left: 1px solid var(--line);
+  box-shadow: -12px 0 32px rgba(23, 33, 43, 0.16);
+  transform: translateX(100%);
+  transition: transform 180ms ease-out;
+}
+.calc-panel.is-open { transform: translateX(0); }
+.calc-panel[hidden] { display: none; }
+.calc-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.calc-head h2 { margin: 0; }
+.calc-close { min-width: 48px; font-size: 1.5rem; line-height: 1; padding: 8px 12px; }
+.calc-sub { color: #56616b; font-size: 0.9rem; margin: 0; }
+.calc-screen { background: #f7f8f4; border: 1px solid var(--line); border-radius: 12px; padding: 12px; }
+.calc-expression { min-height: 1.5em; color: #56616b; font-size: 0.95rem; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.calc-display { font-size: 2rem; font-weight: 800; line-height: 1.2; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.calc-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.calc-grid button { min-height: 48px; min-width: 44px; padding: 8px 4px; font-size: 1.15rem; background: #fff; color: #17212b; border: 2px solid var(--line); }
+.calc-grid button[data-calc="op"] { background: #e9f3f1; border-color: var(--primary); }
+.calc-grid button.calc-equals { background: var(--primary); border-color: var(--primary); color: #fff; }
+.calc-note { margin: 0; color: #56616b; }
+@media (prefers-reduced-motion: reduce) {
+  .calc-panel { transform: none; transition: none; }
+}

@@ -38,6 +38,13 @@ let examTickStart = 0;
 let examTickCarryMs = 0;
 let examTickQid = null;
 let examTimerId = null;
+let calcOpen = false;
+let calcTokens = [];
+let calcCurrent = "";
+let calcError = null;
+let calcErrorExpression = "";
+let calcEvaluated = false;
+let calcHistory = "";
 
 function requireJson(response) { if (!response.ok) throw new Error(`Bestand kon niet worden geladen: ${response.url}`); return response.json(); }
 function escapeHtml(value) { return String(value ?? "").replace(/[&<>'"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[character]); }
@@ -72,6 +79,7 @@ function render() {
   else app.innerHTML = shell(renderToday(), "vandaag");
   bindEvents();
   manageExamTimer();
+  syncCalcWithRoute();
 }
 
 function renderOnboarding() {
@@ -189,7 +197,7 @@ function examQuestionView(next, session) {
       ? `<button id="submit-exam" data-exam="${next.exam}">Lever proefexamen ${next.exam} in</button>`
       : `<button id="next-activity">Volgende</button>`)
     : `<button id="check-answer">Sla antwoord op</button>`;
-  return `<p class="eyebrow">Proefexamen ${next.exam} · ${escapeHtml(domainNames[question.domain])}</p><p id="exam-timer" role="timer">${escapeHtml(timerText)}</p><p>Vraag ${index + 1} van ${total}</p><div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="${total}" aria-valuenow="${answered}"><span style="width:${(answered / total) * 100}%"></span></div>${examStrip(session)}<section class="exercise"><h1>${escapeHtml(question.prompt)}</h1>${visualFor(question)}${answer}${feedback}</section><div class="actions">${actions}<button class="secondary" data-route="vandaag">Bewaar en stop</button></div>`;
+  return `<p class="eyebrow">Proefexamen ${next.exam} · ${escapeHtml(domainNames[question.domain])}</p><p id="exam-timer" role="timer">${escapeHtml(timerText)}</p><p>Vraag ${index + 1} van ${total}</p><div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="${total}" aria-valuenow="${answered}"><span style="width:${(answered / total) * 100}%"></span></div>${examStrip(session)}<section class="exercise"><h1>${escapeHtml(question.prompt)}</h1>${visualFor(question)}${answer}${feedback}</section><div class="actions">${actions}<button class="secondary" id="calc-toggle" aria-expanded="${calcOpen ? "true" : "false"}" aria-controls="calc-panel">Rekenmachine</button><button class="secondary" data-route="vandaag">Bewaar en stop</button></div>`;
 }
 
 function examResultTable(session) {
@@ -561,10 +569,344 @@ function bindEvents() {
     catch (error) { alert(error.message); }
   });
   document.querySelector("#open-import")?.addEventListener("click", () => document.querySelector("#import-file").click());
+  document.querySelector("#calc-toggle")?.addEventListener("click", toggleCalc);
   document.querySelector("#import-file")?.addEventListener("change", importFile);
   document.querySelector("#export-json")?.addEventListener("click", exportJson);
   document.querySelector("#export-csv")?.addEventListener("click", exportCsv);
   document.querySelector("#reset")?.addEventListener("click", () => { if (confirm("Alle lokale voortgang wissen en opnieuw beginnen?")) { localStorage.removeItem(STORAGE_KEY); state = structuredClone(blankState); location.hash = "#/"; render(); } });
+}
+
+function calcParseEntry(value) {
+  if (value === "" || value === "-" || value === ",") return NaN;
+  return Number(String(value).replace(",", "."));
+}
+
+function calcFormatNumber(value) {
+  if (!Number.isFinite(value)) return null;
+  const rounded = Math.round(value * 1e10) / 1e10;
+  const fixed = Object.is(rounded, -0) ? 0 : rounded;
+  if (fixed !== 0 && (Math.abs(fixed) >= 1e12 || Math.abs(fixed) < 1e-9)) {
+    return String(fixed.toExponential(6)).replace(".", ",");
+  }
+  return String(fixed).replace(".", ",");
+}
+
+function calcEvaluateList(list) {
+  if (!list.length) return { empty: true };
+  if (typeof list[list.length - 1] === "string") return { incomplete: true };
+  const first = [list[0]];
+  for (let index = 1; index < list.length; index += 2) {
+    const operator = list[index];
+    const next = list[index + 1];
+    if (operator === "×" || operator === "÷") {
+      const left = first.pop();
+      if (operator === "÷" && next === 0) return { divZero: true };
+      first.push(operator === "×" ? left * next : left / next);
+    } else {
+      first.push(operator, next);
+    }
+  }
+  let result = first[0];
+  for (let index = 1; index < first.length; index += 2) {
+    result = first[index] === "+" ? result + first[index + 1] : result - first[index + 1];
+  }
+  if (!Number.isFinite(result)) return { divZero: true };
+  return { value: Math.round(result * 1e10) / 1e10 };
+}
+
+function calcLiveParts() {
+  const parts = calcTokens.map((token) => (typeof token === "number" ? calcFormatNumber(token) : token));
+  if (calcCurrent !== "") parts.push(calcCurrent);
+  return parts;
+}
+
+function updateCalcDisplay() {
+  const expression = document.querySelector("#calc-expression");
+  const display = document.querySelector("#calc-display");
+  if (!expression || !display) return;
+  if (calcError) {
+    expression.textContent = calcErrorExpression;
+    display.textContent = calcError;
+    return;
+  }
+  if (calcEvaluated) {
+    expression.textContent = calcHistory || "Voer een berekening in";
+    display.textContent = calcCurrent === "" ? "0" : calcCurrent;
+    return;
+  }
+  const parts = calcLiveParts();
+  expression.textContent = parts.length ? parts.join(" ") : "Voer een berekening in";
+  if (calcCurrent !== "") display.textContent = calcCurrent;
+  else if (calcTokens.length >= 2 && typeof calcTokens[calcTokens.length - 2] === "number") display.textContent = calcFormatNumber(calcTokens[calcTokens.length - 2]);
+  else if (calcTokens.length === 1 && typeof calcTokens[0] === "number") display.textContent = calcFormatNumber(calcTokens[0]);
+  else display.textContent = "0";
+}
+
+function calcResetEntry() {
+  calcTokens = [];
+  calcCurrent = "";
+  calcError = null;
+  calcErrorExpression = "";
+  calcEvaluated = false;
+  calcHistory = "";
+}
+
+function calcInputDigit(digit) {
+  if (calcError) calcResetEntry();
+  if (calcEvaluated) {
+    calcTokens = [];
+    calcCurrent = "";
+    calcHistory = "";
+    calcEvaluated = false;
+  }
+  const digits = calcCurrent.replace(/[^0-9]/g, "").length;
+  if (digits >= 12) return;
+  if (calcCurrent === "0") calcCurrent = digit;
+  else if (calcCurrent === "-0") calcCurrent = `-${digit}`;
+  else calcCurrent += digit;
+  updateCalcDisplay();
+}
+
+function calcInputComma() {
+  if (calcError) calcResetEntry();
+  if (calcEvaluated) {
+    calcTokens = [];
+    calcCurrent = "";
+    calcHistory = "";
+    calcEvaluated = false;
+  }
+  if (calcCurrent.includes(",")) return;
+  if (calcCurrent === "" || calcCurrent === "-") calcCurrent += "0,";
+  else calcCurrent += ",";
+  updateCalcDisplay();
+}
+
+function calcPushCurrent() {
+  if (calcCurrent === "" || calcCurrent === "-") return false;
+  const value = calcParseEntry(calcCurrent);
+  if (!Number.isFinite(value)) return false;
+  calcTokens.push(value);
+  calcCurrent = "";
+  return true;
+}
+
+function calcInputOperator(operator) {
+  if (calcError) return;
+  if (!["+", "−", "×", "÷"].includes(operator)) return;
+  if (calcEvaluated) {
+    calcEvaluated = false;
+    calcHistory = "";
+  }
+  if (calcCurrent !== "" && calcCurrent !== "-") calcPushCurrent();
+  if (!calcTokens.length) return;
+  if (typeof calcTokens[calcTokens.length - 1] === "string") calcTokens[calcTokens.length - 1] = operator;
+  else calcTokens.push(operator);
+  updateCalcDisplay();
+}
+
+function calcToggleSign() {
+  if (calcError) return;
+  if (calcEvaluated) calcEvaluated = false;
+  if (calcCurrent !== "") {
+    calcCurrent = calcCurrent.startsWith("-") ? calcCurrent.slice(1) : `-${calcCurrent}`;
+    if (calcCurrent === "-") calcCurrent = "";
+  } else calcCurrent = "-";
+  updateCalcDisplay();
+}
+
+function calcPercent() {
+  if (calcError) return;
+  if (calcEvaluated) calcEvaluated = false;
+  if (calcCurrent === "" || calcCurrent === "-") return;
+  const value = calcParseEntry(calcCurrent);
+  if (!Number.isFinite(value)) return;
+  const formatted = calcFormatNumber(value / 100);
+  if (formatted === null) return;
+  calcCurrent = formatted;
+  updateCalcDisplay();
+}
+
+function calcClear() {
+  calcResetEntry();
+  updateCalcDisplay();
+}
+
+function calcBackspace() {
+  if (calcError) {
+    calcResetEntry();
+    updateCalcDisplay();
+    return;
+  }
+  if (calcEvaluated) calcEvaluated = false;
+  if (calcCurrent !== "") {
+    calcCurrent = calcCurrent.slice(0, -1);
+    if (calcCurrent === "-") calcCurrent = "";
+  } else if (calcTokens.length && typeof calcTokens[calcTokens.length - 1] === "string") {
+    calcTokens.pop();
+  }
+  updateCalcDisplay();
+}
+
+function calcEquals() {
+  if (calcError) return;
+  if (calcEvaluated) return;
+  const parts = calcLiveParts();
+  const list = [...calcTokens];
+  if (calcCurrent !== "" && calcCurrent !== "-") {
+    const value = calcParseEntry(calcCurrent);
+    if (!Number.isFinite(value)) return;
+    list.push(value);
+  }
+  const outcome = calcEvaluateList(list);
+  if (outcome?.empty || outcome?.incomplete) return;
+  if (outcome?.divZero) {
+    calcErrorExpression = parts.join(" ");
+    calcError = "Delen door nul kan niet";
+    updateCalcDisplay();
+    return;
+  }
+  const formatted = calcFormatNumber(outcome.value);
+  if (formatted === null) {
+    calcErrorExpression = parts.join(" ");
+    calcError = "Delen door nul kan niet";
+    updateCalcDisplay();
+    return;
+  }
+  calcHistory = `${parts.join(" ")} =`;
+  calcTokens = [];
+  calcCurrent = formatted;
+  calcEvaluated = true;
+  updateCalcDisplay();
+}
+
+function handleCalcButton(action, value) {
+  if (action === "digit") calcInputDigit(value);
+  else if (action === "comma") calcInputComma();
+  else if (action === "op") calcInputOperator(value);
+  else if (action === "equals") calcEquals();
+  else if (action === "clear") calcClear();
+  else if (action === "back") calcBackspace();
+  else if (action === "sign") calcToggleSign();
+  else if (action === "percent") calcPercent();
+}
+
+function handleCalcKey(event) {
+  const key = event.key;
+  if (/^[0-9]$/.test(key)) {
+    event.preventDefault();
+    calcInputDigit(key);
+  } else if (key === "," || key === ".") {
+    event.preventDefault();
+    calcInputComma();
+  } else if (key === "+" || key === "-" || key === "*" || key === "/" || key === "x" || key === "X") {
+    event.preventDefault();
+    calcInputOperator(key === "+" ? "+" : key === "-" ? "−" : key === "/" ? "÷" : "×");
+  } else if (key === "%") {
+    event.preventDefault();
+    calcPercent();
+  } else if (key === "Enter" || key === "=") {
+    event.preventDefault();
+    calcEquals();
+  } else if (key === "Backspace") {
+    event.preventDefault();
+    calcBackspace();
+  } else if (key === "Escape") {
+    event.preventDefault();
+    closeCalc(true);
+  } else if (key === "c" || key === "C" || key === "Delete") {
+    event.preventDefault();
+    calcClear();
+  }
+}
+
+function ensureCalcPanel() {
+  if (document.querySelector("#calc-panel")) return;
+  const panel = document.createElement("section");
+  panel.id = "calc-panel";
+  panel.className = "calc-panel";
+  panel.setAttribute("role", "dialog");
+  panel.setAttribute("aria-label", "Rekenmachine voor het proefexamen");
+  panel.setAttribute("aria-modal", "false");
+  panel.setAttribute("aria-hidden", "true");
+  panel.hidden = true;
+  panel.innerHTML = `<div class="calc-head"><h2>Rekenmachine</h2><button id="calc-close" class="secondary calc-close" aria-label="Rekenmachine sluiten">×</button></div><p class="calc-sub">Eerst × en ÷, daarna + en −. Komma als decimaalteken.</p><div class="calc-screen"><div id="calc-expression" class="calc-expression" aria-hidden="true">Voer een berekening in</div><div id="calc-display" class="calc-display" role="status" aria-live="polite">0</div></div><div class="calc-grid" role="group" aria-label="Rekenmachinetoetsen"><button data-calc="clear" aria-label="Alles wissen">C</button><button data-calc="back" aria-label="Laatste cijfer wissen">⌫</button><button data-calc="percent" aria-label="Procent">%</button><button data-calc="op" data-value="÷" aria-label="Delen door">÷</button><button data-calc="digit" data-value="7">7</button><button data-calc="digit" data-value="8">8</button><button data-calc="digit" data-value="9">9</button><button data-calc="op" data-value="×" aria-label="Keer">×</button><button data-calc="digit" data-value="4">4</button><button data-calc="digit" data-value="5">5</button><button data-calc="digit" data-value="6">6</button><button data-calc="op" data-value="−" aria-label="Min">−</button><button data-calc="digit" data-value="1">1</button><button data-calc="digit" data-value="2">2</button><button data-calc="digit" data-value="3">3</button><button data-calc="op" data-value="+" aria-label="Plus">+</button><button data-calc="sign" aria-label="Van teken wisselen">±</button><button data-calc="digit" data-value="0">0</button><button data-calc="comma" aria-label="Komma">,</button><button data-calc="equals" class="calc-equals" aria-label="Is gelijk aan">=</button></div><p class="calc-note"><small>Gebruik wordt niet bewaard als poging.</small></p>`;
+  document.body.appendChild(panel);
+  panel.addEventListener("click", (event) => {
+    if (event.target.closest("#calc-close")) {
+      closeCalc(true);
+      return;
+    }
+    const button = event.target.closest("[data-calc]");
+    if (button) handleCalcButton(button.dataset.calc, button.dataset.value);
+  });
+  panel.addEventListener("keydown", handleCalcKey);
+  if (!document.body.dataset.calcEscapeBound) {
+    document.body.dataset.calcEscapeBound = "true";
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && calcOpen) {
+        event.preventDefault();
+        closeCalc(true);
+      }
+    });
+  }
+}
+
+function openCalc() {
+  ensureCalcPanel();
+  const panel = document.querySelector("#calc-panel");
+  if (!panel) return;
+  calcOpen = true;
+  panel.hidden = false;
+  panel.setAttribute("aria-hidden", "false");
+  panel.classList.add("is-open");
+  updateCalcDisplay();
+  document.querySelector("#calc-toggle")?.setAttribute("aria-expanded", "true");
+  document.querySelector("#calc-close")?.focus();
+}
+
+function closeCalc(returnFocus = true) {
+  const panel = document.querySelector("#calc-panel");
+  calcOpen = false;
+  if (panel) {
+    panel.classList.remove("is-open");
+    panel.hidden = true;
+    panel.setAttribute("aria-hidden", "true");
+  }
+  const toggle = document.querySelector("#calc-toggle");
+  if (toggle) toggle.setAttribute("aria-expanded", "false");
+  if (returnFocus && toggle) toggle.focus();
+}
+
+function toggleCalc() {
+  if (calcOpen) closeCalc(true);
+  else openCalc();
+}
+
+function syncCalcWithRoute() {
+  ensureCalcPanel();
+  const toggle = document.querySelector("#calc-toggle");
+  const panel = document.querySelector("#calc-panel");
+  if (!panel) return;
+  if (!toggle) {
+    if (calcOpen) {
+      calcOpen = false;
+      panel.classList.remove("is-open");
+      panel.hidden = true;
+      panel.setAttribute("aria-hidden", "true");
+    }
+    return;
+  }
+  toggle.setAttribute("aria-expanded", calcOpen ? "true" : "false");
+  if (calcOpen) {
+    panel.hidden = false;
+    panel.setAttribute("aria-hidden", "false");
+    panel.classList.add("is-open");
+    updateCalcDisplay();
+  } else {
+    panel.classList.remove("is-open");
+    panel.hidden = true;
+    panel.setAttribute("aria-hidden", "true");
+  }
 }
 
 function saveDraft(questionId, value, rerender) { state.drafts[questionId] = value; state.feedback = null; saveState(); if (rerender) render(); }
