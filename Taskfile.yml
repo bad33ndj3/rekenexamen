@@ -1,0 +1,41 @@
+version: "3"
+
+tasks:
+  serve:
+    desc: Start de app op http://localhost:8000
+    cmds:
+      - python3 -m http.server 8000
+
+  test:
+    desc: Run alle snelle controles
+    cmds:
+      - node --check app.js
+      - node test-data.mjs
+      - node test-core.mjs
+      - node test-integration.mjs
+
+  test:data:
+    desc: Controleer vraagbanken en leerdoeldekking
+    cmds:
+      - node test-data.mjs
+
+  test:core:
+    desc: Controleer import, scoring en activity planning
+    cmds:
+      - node test-core.mjs
+
+  test:integration:
+    desc: Test de echte voortgangsexport en volledige catalogus
+    cmds:
+      - node test-integration.mjs
+
+  browser:
+    desc: Open de draaiende app in de Playwright-browser
+    cmds:
+      - ~/.codex/skills/playwright/scripts/playwright_cli.sh --session rekenen open http://127.0.0.1:8000
+
+  browser:mobile:
+    desc: Zet de geopende Playwright-browser op mobiel formaat
+    cmds:
+      - ~/.codex/skills/playwright/scripts/playwright_cli.sh --session rekenen resize 390 844
+      - ~/.codex/skills/playwright/scripts/playwright_cli.sh --session rekenen snapshot

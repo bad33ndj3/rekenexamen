@@ -1,3 +1,6 @@
 .playwright-cli/
 .DS_Store
 *.log
+
+# uitgeversmateriaal niet meepushen
+research/sources/*.pdf
