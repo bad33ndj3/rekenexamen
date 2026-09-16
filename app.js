@@ -129,7 +129,7 @@ function renderActivity() {
   const lesson = isDiagnostic || phase === "exam" ? "" : `<section class="worked-example"><h2>${escapeHtml(objective?.title)}</h2><p>${escapeHtml(objective?.plain_explanation)}</p><p><strong>Uitgewerkt voorbeeld:</strong> ${escapeHtml(objective?.worked_example)}</p></section>`;
   const feedback = done || emptyError ? `<div class="feedback ${state.feedback.correct === false || emptyError ? "error" : ""}" role="status"><strong>${emptyError ? "Nog niet." : ["diagnostic", "exam"].includes(phase) ? "Opgeslagen." : state.feedback.correct ? "Goed." : "Bekijk deze stap."}</strong> ${escapeHtml(state.feedback.text)}</div>` : "";
   const position = isDiagnostic ? `<p>Vraag ${state.diagnosticIndex + 1} van ${diagnosticCount()}</p><div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="${diagnosticCount()}" aria-valuenow="${state.diagnosticIndex}"><span style="width:${(state.diagnosticIndex / diagnosticCount()) * 100}%"></span></div>` : "";
-  return `<p class="eyebrow">${isDiagnostic ? `Nulmeting · ${domainNames[question.domain]}` : phase === "exam" ? `Proefexamen ${question.exam}` : `${question.objective_codes[0]} · ${domainNames[objective?.domain]}`}</p>${position}${lesson}<section class="exercise"><h1>${escapeHtml(question.prompt)}</h1>${visualFor(question)}${answer}${feedback}</section><div class="actions">${done ? `<button id="next-activity">Volgende</button>` : `<button id="check-answer">${isDiagnostic ? "Sla antwoord op" : "Controleer antwoord"}</button>`}<button class="secondary" data-route="vandaag">Bewaar en stop</button></div>`;
+  return `<p class="eyebrow">${isDiagnostic ? `Nulmeting · ${domainNames[question.domain]}` : phase === "exam" ? `Proefexamen ${question.exam}` : `${question.objective_codes[0]} · ${domainNames[objective?.domain]}`}</p>${position}${lesson}<section class="exercise"><h1>${escapeHtml(question.prompt)}</h1>${visualFor(question)}${answer}${feedback}</section><div class="actions">${done ? `<button id="next-activity">Volgende</button>` : `<button id="check-answer">${isDiagnostic ? "Sla antwoord op" : "Controleer antwoord"}</button>`}<button class="secondary" id="calc-toggle" aria-expanded="${calcOpen ? "true" : "false"}" aria-controls="calc-panel">Rekenmachine</button><button class="secondary" data-route="vandaag">Bewaar en stop</button></div>`;
 }
 
 function renderExamActivity(next) {
@@ -825,7 +825,7 @@ function ensureCalcPanel() {
   panel.id = "calc-panel";
   panel.className = "calc-panel";
   panel.setAttribute("role", "dialog");
-  panel.setAttribute("aria-label", "Rekenmachine voor het proefexamen");
+  panel.setAttribute("aria-label", "Rekenmachine");
   panel.setAttribute("aria-modal", "false");
   panel.setAttribute("aria-hidden", "true");
   panel.hidden = true;
@@ -882,6 +882,7 @@ function toggleCalc() {
   else openCalc();
 }
 
+/* Paneel mag in alle vraagweergaven blijven staan; alleen op niet-vraagroutes (zonder #calc-toggle) wordt het verborgen. Paneel leeft buiten #app en overleeft render(). */
 function syncCalcWithRoute() {
   ensureCalcPanel();
   const toggle = document.querySelector("#calc-toggle");

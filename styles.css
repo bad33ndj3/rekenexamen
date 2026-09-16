@@ -114,7 +114,7 @@ figcaption { color: #56616b; font-size: .88rem; }
 @media (hover: hover) { button:not(:disabled):hover, .button:not([aria-disabled="true"]):hover { filter: brightness(.94); } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; } }
 
-/* Rekenmachine als inschuifpaneel van rechts (alleen tijdens proefexamen). */
+/* Rekenmachine als inschuifpaneel van rechts (bij alle vraagweergaven). */
 .calc-panel {
   position: fixed;
   top: 0;
