@@ -1,0 +1,113 @@
+:root {
+  color-scheme: light;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: #17212b;
+  background: #f7f8f4;
+  font-size: 17px;
+  line-height: 1.5;
+  --primary: #176b68;
+  --attention: #b86b16;
+  --error: #b42318;
+  --line: #d9ded8;
+  --surface: #ffffff;
+  --app-gutter: 16px;
+  --nav-height: 72px;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 320px; }
+button, input, textarea, select { font: inherit; }
+button, .button {
+  min-height: 48px;
+  border: 0;
+  border-radius: 10px;
+  padding: 12px 16px;
+  background: var(--primary);
+  color: white;
+  font-weight: 700;
+  cursor: pointer;
+}
+button:disabled, .button[aria-disabled="true"] { cursor: not-allowed; opacity: .52; }
+button.secondary { background: transparent; color: var(--primary); border: 1px solid var(--primary); }
+button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible, a:focus-visible { outline: 3px solid #f0a34a; outline-offset: 3px; }
+button:active:not(:disabled), .button:active { transform: translateY(1px); }
+h1 { font-size: clamp(1.75rem, 8vw, 2.4rem); line-height: 1.1; margin: 0 0 16px; }
+h2 { font-size: 1.25rem; margin: 0 0 12px; }
+p { margin: 0 0 16px; }
+small { color: #56616b; }
+
+#app { width: min(100%, 640px); min-height: 100dvh; margin: 0 auto; padding: 24px var(--app-gutter) calc(var(--nav-height) + 32px); }
+.skip-link { position: absolute; left: -9999px; }
+.skip-link:focus { left: 16px; top: 16px; z-index: 10; background: white; padding: 8px; }
+.eyebrow { color: var(--primary); font-weight: 800; letter-spacing: .04em; text-transform: uppercase; font-size: .78rem; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 20px; margin: 16px 0; }
+.stack { display: grid; gap: 12px; }
+.actions {
+  position: sticky;
+  bottom: max(8px, env(safe-area-inset-bottom));
+  z-index: 2;
+  display: grid;
+  gap: 10px;
+  margin-top: 24px;
+  padding: 12px 0 max(4px, env(safe-area-inset-bottom));
+  background: #f7f8f4;
+  border-top: 1px solid var(--line);
+}
+#app:has(.bottom-nav) .actions { bottom: calc(var(--nav-height) + env(safe-area-inset-bottom)); }
+.choice { width: 100%; text-align: left; background: white; color: #17212b; border: 2px solid var(--line); }
+.choice[aria-pressed="true"] { border-color: var(--primary); background: #e9f3f1; }
+.field label { display: block; font-weight: 700; margin-bottom: 6px; }
+.field input, .field textarea, .field select { width: 100%; min-height: 48px; border: 2px solid var(--line); border-radius: 10px; padding: 10px 12px; background: white; }
+.field input:user-invalid, .field textarea:user-invalid, .field select:user-invalid { border-color: var(--error); }
+.field textarea { min-height: 112px; background-color: #fff; background-image: linear-gradient(#e8ece8 1px, transparent 1px), linear-gradient(90deg, #e8ece8 1px, transparent 1px); background-size: 20px 20px; }
+.feedback { border-left: 5px solid var(--primary); padding: 12px 14px; background: #e9f3f1; margin-top: 16px; }
+.feedback.error { border-color: var(--error); background: #fff0ee; }
+.progress { height: 8px; border-radius: 999px; overflow: hidden; background: var(--line); margin: 12px 0 24px; }
+.progress > span { display: block; height: 100%; background: var(--primary); }
+.domain { display: grid; grid-template-columns: 1fr auto; gap: 8px; padding: 14px 0; border-bottom: 1px solid var(--line); }
+.bottom-nav {
+  position: fixed;
+  z-index: 3;
+  inset: auto auto 0 50%;
+  width: min(100%, 640px);
+  transform: translateX(-50%);
+  background: rgba(247,248,244,.96);
+  border-top: 1px solid var(--line);
+  padding: 8px 8px max(8px, env(safe-area-inset-bottom));
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+}
+.bottom-nav button { min-width: 0; padding: 8px 4px; background: transparent; color: #17212b; font-size: .82rem; line-height: 1.15; overflow-wrap: anywhere; }
+.bottom-nav button[aria-current="page"] { background: #e9f3f1; color: var(--primary); }
+.question-figure, figure img, .figure-image { display: block; width: 100%; max-width: 100%; height: auto; border: 1px solid var(--line); border-radius: 10px; margin: 8px 0 16px; }
+figure { max-width: 100%; margin: 16px 0; }
+figcaption { color: #56616b; font-size: .88rem; }
+
+/* Tables stay readable rather than creating an app-wide horizontal scroll. */
+#app table, .data-table { width: 100%; table-layout: fixed; border-collapse: collapse; margin: 16px 0; background: var(--surface); }
+#app th, #app td, .data-table th, .data-table td { padding: 10px 8px; text-align: left; vertical-align: top; overflow-wrap: anywhere; border: 1px solid var(--line); }
+#app th, .data-table th { background: #e9f3f1; color: var(--primary); font-weight: 800; }
+
+/* Reusable one-column building blocks for upcoming lesson, exam and coach routes. */
+.lesson-meta, .exam-meta, .coach-meta { color: #56616b; font-size: .9rem; }
+.worked-example, .hint, .exam-warning { border-left: 5px solid var(--attention); background: #fff7eb; padding: 14px; margin: 16px 0; }
+.hint[hidden], .worked-example[hidden] { display: none; }
+.exercise, .exam-question, .attempt-card { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 16px; margin: 16px 0; }
+.review-grid, .score-buttons { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
+.review-grid > *, .score-buttons > * { min-width: 0; }
+.attempt-card + .attempt-card { margin-top: 10px; }
+
+@media (min-width: 700px) {
+  #app { padding-top: 48px; }
+  .actions.two { grid-template-columns: 1fr 1fr; }
+}
+
+@media (max-width: 359px) {
+  :root { --app-gutter: 12px; }
+  .bottom-nav button { font-size: .76rem; }
+  #app th, #app td, .data-table th, .data-table td { padding: 8px 6px; font-size: .88rem; }
+}
+
+@media (hover: hover) { button:not(:disabled):hover, .button:not([aria-disabled="true"]):hover { filter: brightness(.94); } }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; } }
