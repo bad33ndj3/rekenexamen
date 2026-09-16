@@ -81,3 +81,24 @@ for (const route of ["vandaag", "leren", "voortgang", "begeleider"]) assert(app.
 for (const feature of ["localStorage", "importFile", "exportJson", "exportCsv"]) assert(app.includes(feature), `functie ontbreekt: ${feature}`);
 
 console.log("integration: echte export hervat bij K10; 58 doelen, routes en opslagfuncties aanwezig");
+
+// Echte proefexamenbank (zelfde opbouw als app.js:27-31): A en B elk 30 vragen,
+// 6 per domein in G→R→V→P→K, zonder overlap.
+import { examQuestionIds } from "./core.mjs";
+const examObjectivesReal = { G: ["G1", "G2", "G3", "G4", "G5", "G7"], R: ["R3", "R5", "R6", "R10", "R11", "R13"], V: ["V1", "V2", "V3", "V4", "V5", "V6"], P: ["P1", "P2", "P3", "P4", "P5", "P7"], K: ["K2", "K4", "K6", "K9", "K10", "K13"] };
+const examBankReal = ["A", "B"].flatMap((exam) => Object.entries(examObjectivesReal).flatMap(([domain, codes]) => codes.map((code, index) => {
+  const source = curriculum.objectives.find((objective) => objective.code === code).questions.find((question) => question.kind === (exam === "A" ? "independent" : "review"));
+  return { ...source, id: `EX-${exam}-${domain}-${index + 1}-${code}`, exam, domain, objective_codes: [code], level: 3, kind: "exam" };
+})));
+const examIdsA = examQuestionIds("A", examBankReal);
+const examIdsB = examQuestionIds("B", examBankReal);
+assert.equal(examIdsA.length, 30, "proefexamen A heeft 30 vragen");
+assert.equal(examIdsB.length, 30, "proefexamen B heeft 30 vragen");
+const byIdReal = new Map(examBankReal.map((question) => [question.id, question]));
+for (const [label, ids] of [["A", examIdsA], ["B", examIdsB]]) {
+  assert.deepEqual(ids.map((id) => byIdReal.get(id).domain), ["G", "G", "G", "G", "G", "G", "R", "R", "R", "R", "R", "R", "V", "V", "V", "V", "V", "V", "P", "P", "P", "P", "P", "P", "K", "K", "K", "K", "K", "K"], `proefexamen ${label} volgt G→R→V→P→K met 6 per domein`);
+}
+assert.equal(new Set([...examIdsA, ...examIdsB]).size, 60, "A en B overlappen niet");
+for (const marker of ["startExam", "submitExam", "exams", "exam-timer", "richttijd", "Bewaar en stop"]) assert(app.includes(marker), `proefexamenfunctie ontbreekt in app.js: ${marker}`);
+assert.match(app, /Vraag \$\{index \+ 1\} van \$\{total\}/, "positiebalk toont Vraag i van 30");
+console.log("integration: proefexamens A/B elk 30 vragen (6 per domein G→R→V→P→K) zonder overlap");

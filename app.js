@@ -1,7 +1,8 @@
-import { importState, nextActivity, scoreAnswer } from "./core.mjs";
+import { EXAM_GUIDELINE_SECONDS, formatExamClock, importState, nextActivity, scoreAnswer, startExam, submitExam } from "./core.mjs";
 
 const STORAGE_KEY = "rekenen-state-v1";
 const domainNames = { B: "Basis", G: "Grootheden en eenheden", R: "2D en 3D", V: "Verhoudingen", P: "Procenten", K: "Grafieken en tabellen" };
+const examDomainOrder = ["G", "R", "V", "P", "K"];
 const [legacyBank, curriculum, level4] = await Promise.all([fetch("questions.json").then(requireJson), fetch("curriculum.json").then(requireJson), fetch("level4.json").then(requireJson)]);
 const objectiveByCode = new Map(curriculum.objectives.map((objective) => [objective.code, objective]));
 const legacyQuestions = legacyBank.map((question) => ({ ...question, kind: question.kind === "diagnostic" ? "legacy-diagnostic" : question.kind }));
@@ -31,8 +32,12 @@ const examQuestions = ["A", "B"].flatMap((exam) => Object.entries(examObjectives
 })));
 const questions = [...legacyQuestions, ...diagnosticQuestions, ...learningQuestions, ...level4Questions, ...examQuestions];
 const questionById = new Map(questions.map((question) => [question.id, question]));
-const blankState = { learner: null, attempts: [], diagnosticIndex: 0, selectedAnswer: null, feedback: null, mastery: [], drafts: {} };
+const blankState = { learner: null, attempts: [], diagnosticIndex: 0, selectedAnswer: null, feedback: null, mastery: [], drafts: {}, exams: { A: null, B: null } };
 let state = loadState();
+let examTickStart = 0;
+let examTickCarryMs = 0;
+let examTickQid = null;
+let examTimerId = null;
 
 function requireJson(response) { if (!response.ok) throw new Error(`Bestand kon niet worden geladen: ${response.url}`); return response.json(); }
 function escapeHtml(value) { return String(value ?? "").replace(/[&<>'"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[character]); }
@@ -48,7 +53,7 @@ function diagnosticCount() { return diagnosticQuestions.filter((question) => que
 function activity() {
   if (state.feedback?.questionId) {
     const question = questionById.get(state.feedback.questionId);
-    return question ? { phase: state.feedback.phase, objective: question.objective_codes[0], question } : null;
+    return question ? { phase: state.feedback.phase, exam: state.feedback.exam ?? null, objective: question.objective_codes[0], question } : null;
   }
   return nextActivity(state, questions);
 }
@@ -66,6 +71,7 @@ function render() {
   else if (route === "begeleider") app.innerHTML = shell(renderCoach(), "begeleider");
   else app.innerHTML = shell(renderToday(), "vandaag");
   bindEvents();
+  manageExamTimer();
 }
 
 function renderOnboarding() {
@@ -76,21 +82,32 @@ function renderOnboarding() {
 
 function renderToday() {
   const next = nextActivity(state, questions);
+  const results = ["A", "B"].map((examId) => examResultCard(examId, state.exams?.[examId])).join("");
   if (!next) {
     const pending = state.mastery.filter((item) => item.next_review_at).sort((a, b) => a.next_review_at.localeCompare(b.next_review_at))[0];
     return pending
-      ? `<p class="eyebrow">Vandaag</p><h1>Goed gewerkt</h1><div class="card"><h2>Volgende hertoets</h2><p>Je volgende korte herhaling staat gepland voor ${new Date(`${pending.next_review_at}T12:00:00`).toLocaleDateString("nl-NL")}.</p><button data-route="voortgang">Bekijk voortgang</button></div>`
-      : `<p class="eyebrow">Vandaag</p><h1>Alle onderdelen zijn afgerond</h1><div class="card"><p>Bekijk je voortgang of exporteer je resultaten bij Begeleider.</p></div>`;
+      ? `${results}<p class="eyebrow">Vandaag</p><h1>Goed gewerkt</h1><div class="card"><h2>Volgende hertoets</h2><p>Je volgende korte herhaling staat gepland voor ${new Date(`${pending.next_review_at}T12:00:00`).toLocaleDateString("nl-NL")}.</p><button data-route="voortgang">Bekijk voortgang</button></div>`
+      : `${results}<p class="eyebrow">Vandaag</p><h1>Alle onderdelen zijn afgerond</h1><div class="card"><p>Bekijk je voortgang of exporteer je resultaten bij Begeleider.</p></div>`;
+  }
+  if (next.phase === "exam" && next.exam) {
+    const session = state.exams?.[next.exam];
+    const open = session && !session.submitted_at;
+    const title = open ? `Ga verder met proefexamen ${next.exam}` : `Start proefexamen ${next.exam}`;
+    const status = open
+      ? `Vraag ${session.current_index + 1} van ${session.question_ids.length} · ${formatExamClock(session.elapsed_seconds ?? 0)} / richtijd 90:00`
+      : "30 vragen · 6 per domein · richtijd 90:00 · geen hints of feedback tijdens het examen";
+    return `${results}<p class="eyebrow">Vandaag</p><h1>${title}</h1><div class="card"><p class="lesson-meta">Proefexamen ${next.exam}</p><h2>${title}</h2><p>${escapeHtml(status)}</p><button data-route="leren">Ga verder</button></div>`;
   }
   const code = next.objective ?? next.question.objective_codes[0];
   const objective = objectiveByCode.get(code);
-  const title = next.phase === "diagnostic" ? "Ga verder met de nulmeting" : next.phase === "recovery" ? "Herstel één denkstap" : next.phase === "review" ? "Tijd voor een hertoets" : next.phase === "exam" ? `Proefexamen ${next.question.exam}` : "Volgende leerdoel";
+  const title = next.phase === "diagnostic" ? "Ga verder met de nulmeting" : next.phase === "recovery" ? "Herstel één denkstap" : next.phase === "review" ? "Tijd voor een hertoets" : next.phase === "exam" ? `Proefexamen ${next.exam ?? next.question.exam ?? ""}`.trim() : "Volgende leerdoel";
   return `<p class="eyebrow">Vandaag</p><h1>${title}</h1><div class="card"><p class="lesson-meta">${escapeHtml(code)} · ${escapeHtml(domainNames[next.question.domain] ?? objective?.domain)}</p><h2>${escapeHtml(objective?.title ?? next.question.prompt)}</h2><p>${escapeHtml(next.phase === "diagnostic" ? `Vraag ${state.diagnosticIndex + 1} van ${diagnosticCount()}` : objective?.plain_explanation ?? "Je volgende vraag staat klaar.")}</p><button data-route="leren">Ga verder</button></div>`;
 }
 
 function renderActivity() {
   const next = activity();
   if (!next) return `<p class="eyebrow">Leren</p><h1>Geen openstaande activiteit</h1><div class="actions"><button data-route="voortgang">Bekijk voortgang</button></div>`;
+  if (next.phase === "exam" && next.exam) return renderExamActivity(next);
   const { question, phase } = next;
   const objective = objectiveByCode.get(question.objective_codes[0]);
   const isDiagnostic = phase === "diagnostic";
@@ -104,6 +121,112 @@ function renderActivity() {
   const feedback = done || emptyError ? `<div class="feedback ${state.feedback.correct === false || emptyError ? "error" : ""}" role="status"><strong>${emptyError ? "Nog niet." : ["diagnostic", "exam"].includes(phase) ? "Opgeslagen." : state.feedback.correct ? "Goed." : "Bekijk deze stap."}</strong> ${escapeHtml(state.feedback.text)}</div>` : "";
   const position = isDiagnostic ? `<p>Vraag ${state.diagnosticIndex + 1} van ${diagnosticCount()}</p><div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="${diagnosticCount()}" aria-valuenow="${state.diagnosticIndex}"><span style="width:${(state.diagnosticIndex / diagnosticCount()) * 100}%"></span></div>` : "";
   return `<p class="eyebrow">${isDiagnostic ? `Nulmeting · ${domainNames[question.domain]}` : phase === "exam" ? `Proefexamen ${question.exam}` : `${question.objective_codes[0]} · ${domainNames[objective?.domain]}`}</p>${position}${lesson}<section class="exercise"><h1>${escapeHtml(question.prompt)}</h1>${visualFor(question)}${answer}${feedback}</section><div class="actions">${done ? `<button id="next-activity">Volgende</button>` : `<button id="check-answer">${isDiagnostic ? "Sla antwoord op" : "Controleer antwoord"}</button>`}<button class="secondary" data-route="vandaag">Bewaar en stop</button></div>`;
+}
+
+function renderExamActivity(next) {
+  const session = state.exams?.[next.exam];
+  if (!session) return examStartScreen(next.exam);
+  if (session.submitted_at) return examResultView(next.exam, session);
+  return examQuestionView(next, session);
+}
+
+function examStartScreen(examId) {
+  return `<p class="eyebrow">Proefexamen ${examId}</p><h1>Start proefexamen ${examId}</h1><div class="card"><h2>30 vragen in vaste volgorde</h2><p>6 vragen per domein in de volgorde grootheden, 2D en 3D, verhoudingen, procenten, grafieken en tabellen. Richtijd 90:00; er is geen harde tijdslimiet.</p><p>Geen hints, geen lesblok en geen directe uitslag. Elk antwoord wordt direct bewaard; stoppen en hervatten kan op elk moment. Inleveren kan op vraag 30.</p><div class="actions"><button id="start-exam" data-exam="${examId}">Start proefexamen ${examId}</button><button class="secondary" data-route="vandaag">Bewaar en stop</button></div></div>`;
+}
+
+function examStrip(session) {
+  const answered = new Set(Object.keys(session.answers ?? {}));
+  const byDomain = { G: [], R: [], V: [], P: [], K: [] };
+  for (const qid of session.question_ids) {
+    const domain = questionById.get(qid)?.domain;
+    if (domain && byDomain[domain]) byDomain[domain].push(qid);
+  }
+  const head = `<thead><tr><th scope="col">Domein</th>${["1", "2", "3", "4", "5", "6"].map((number) => `<th scope="col">${number}</th>`).join("")}</tr></thead>`;
+  const body = examDomainOrder.map((domain) => {
+    const cells = byDomain[domain].map((qid, index) => {
+      const done = answered.has(qid);
+      return `<td aria-label="${escapeHtml(domainNames[domain])} vraag ${index + 1}: ${done ? "beantwoord" : "open"}">${done ? "✓" : "·"}</td>`;
+    }).join("");
+    return `<tr><th scope="row">${domain}</th>${cells}</tr>`;
+  }).join("");
+  return `<table class="data-table"><caption>Overzicht per domein: ✓ is beantwoord, · is open</caption>${head}<tbody>${body}</tbody></table>`;
+}
+
+function examQuestionView(next, session) {
+  const total = session.question_ids.length;
+  const index = Math.min(Math.max(0, session.current_index ?? 0), total - 1);
+  const question = questionById.get(session.question_ids[index]);
+  if (!question) return `<p class="eyebrow">Proefexamen ${next.exam}</p><h1>Antwoord kan niet worden getoond</h1><div class="actions"><button data-route="vandaag">Bewaar en stop</button></div>`;
+  const answered = Object.keys(session.answers ?? {}).length;
+  const done = state.feedback?.questionId === question.id && !state.feedback.empty;
+  const emptyError = state.feedback?.questionId === question.id && state.feedback.empty;
+  const draft = state.drafts[question.id] ?? "";
+  const answer = question.type === "choice"
+    ? `<div class="stack">${question.options.map((option) => `<button class="choice answer" data-answer="${escapeHtml(option)}" aria-pressed="${String(draft) === String(option)}">${escapeHtml(option)}</button>`).join("")}</div>`
+    : `<div class="field"><label for="answer">Jouw antwoord${question.unit ? ` in ${escapeHtml(question.unit)}` : ""}</label><input id="answer" inputmode="decimal" autocomplete="off" value="${escapeHtml(draft)}"></div>`;
+  const feedback = done || emptyError ? `<div class="feedback ${emptyError ? "error" : ""}" role="status"><strong>${emptyError ? "Nog niet." : "Opgeslagen."}</strong> ${escapeHtml(state.feedback.text)}</div>` : "";
+  const elapsed = session.elapsed_seconds ?? 0;
+  const timerText = elapsed >= EXAM_GUIDELINE_SECONDS ? "richttijd voorbij, maak rustig af" : `${formatExamClock(elapsed)} / richtijd 90:00`;
+  const allAnswered = session.question_ids.every((qid) => Object.hasOwn(session.answers ?? {}, qid));
+  const actions = done
+    ? (allAnswered && index === total - 1
+      ? `<button id="submit-exam" data-exam="${next.exam}">Lever proefexamen ${next.exam} in</button>`
+      : `<button id="next-activity">Volgende</button>`)
+    : `<button id="check-answer">Sla antwoord op</button>`;
+  return `<p class="eyebrow">Proefexamen ${next.exam} · ${escapeHtml(domainNames[question.domain])}</p><p id="exam-timer" role="timer">${escapeHtml(timerText)}</p><p>Vraag ${index + 1} van ${total}</p><div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="${total}" aria-valuenow="${answered}"><span style="width:${(answered / total) * 100}%"></span></div>${examStrip(session)}<section class="exercise"><h1>${escapeHtml(question.prompt)}</h1>${visualFor(question)}${answer}${feedback}</section><div class="actions">${actions}<button class="secondary" data-route="vandaag">Bewaar en stop</button></div>`;
+}
+
+function examResultTable(session) {
+  const result = session.result;
+  const rows = examDomainOrder.map((domain) => {
+    const pct = result.per_domain[domain] ?? 0;
+    return `<tr><th scope="row">${escapeHtml(domainNames[domain])}</th><td>${pct}%</td><td>${pct >= 70 ? "✓" : "·"} norm 70%</td></tr>`;
+  }).join("");
+  return `<table class="data-table"><caption>Uitslag per domein: ✓ haalt de norm, · niet</caption><thead><tr><th scope="col">Domein</th><th scope="col">Score</th><th scope="col">Norm</th></tr></thead><tbody>${rows}<tr><th scope="row">Totaal</th><td><strong>${result.total_pct}%</strong></td><td>norm 80%</td></tr></tbody></table>`;
+}
+
+function examAdvice(examId, session) {
+  const result = session.result;
+  const weak = examDomainOrder.filter((domain) => (result.per_domain[domain] ?? 0) < 70);
+  if (result.passed) return `Gehaald met ${result.total_pct}%: elk domein haalt minimaal 70% (praktisch: minstens 5 van 6 per domein).${examId === "A" ? " Maak daarna proefexamen B." : " Beide proefexamens zijn ingeleverd."}`;
+  return `Nog niet gehaald met ${result.total_pct}%: nodig is 80% totaal en minimaal 70% per domein (praktisch: minstens 5 van 6). Herhaal ${weak.map((domain) => domainNames[domain]).join(", ") || "de zwakste domeinen"} en ${examId === "A" ? "maak daarna proefexamen B" : "overleg met je begeleider over een herkansing"}.`;
+}
+
+function examResultCard(examId, session) {
+  if (!session?.submitted_at || !session?.result) return "";
+  const verdict = session.result.passed ? "gehaald" : "nog niet gehaald";
+  return `<section class="card"><h2>Proefexamen ${examId}: ${verdict} (${session.result.total_pct}%)</h2>${examResultTable(session)}<p>${escapeHtml(examAdvice(examId, session))}</p></section>`;
+}
+
+function examResultView(examId, session) {
+  return `<p class="eyebrow">Proefexamen ${examId}</p><h1>Uitslag proefexamen ${examId}</h1>${examResultCard(examId, session)}<div class="actions"><button data-route="vandaag">Terug naar vandaag</button></div>`;
+}
+
+function stopExamTimer() { if (examTimerId) { clearInterval(examTimerId); examTimerId = null; } }
+
+function startExamTimer(session) {
+  stopExamTimer();
+  const now = Date.now();
+  const qid = session.question_ids[session.current_index];
+  if (examTickQid === qid && examTickStart) examTickCarryMs += Math.max(0, now - examTickStart);
+  else { examTickQid = qid; examTickCarryMs = 0; }
+  examTickStart = now;
+  const base = session.elapsed_seconds ?? 0;
+  const tick = () => {
+    const timer = document.querySelector("#exam-timer");
+    if (!timer) { stopExamTimer(); return; }
+    const total = base + Math.floor((examTickCarryMs + Date.now() - examTickStart) / 1000);
+    timer.textContent = total >= EXAM_GUIDELINE_SECONDS ? "richttijd voorbij, maak rustig af" : `${formatExamClock(total)} / richtijd 90:00`;
+  };
+  tick();
+  examTimerId = setInterval(tick, 1000);
+}
+
+function manageExamTimer() {
+  const current = state.learner ? activity() : null;
+  const session = current?.phase === "exam" && current?.exam ? state.exams?.[current.exam] : null;
+  if (session && !session.submitted_at && !state.feedback?.questionId && document.querySelector("#exam-timer")) startExamTimer(session);
+  else stopExamTimer();
 }
 
 function visualFor(question) {
@@ -353,12 +476,13 @@ function visualPacking(visual) {
 
 function masteryFor(code) { return state.mastery.find((item) => item.objective_code === code) ?? { state: "niet_gestart" }; }
 function renderProgress() {
+  const examCards = ["A", "B"].map((examId) => examResultCard(examId, state.exams?.[examId])).join("");
   const grouped = Object.entries(domainNames).map(([domain, name]) => {
     const objectives = curriculum.objectives.filter((objective) => objective.domain === domain);
     const mastered = objectives.filter((objective) => ["toetsklaar", "beheerst"].includes(masteryFor(objective.code).state)).length;
     return `<section class="card"><h2>${name}</h2><p>${mastered} van ${objectives.length} klaar voor het proefexamen</p>${objectives.map((objective) => `<div class="domain"><span>${objective.code} · ${escapeHtml(objective.title)}</span><strong>${masteryFor(objective.code).state.replaceAll("_", " ")}</strong></div>`).join("")}</section>`;
   }).join("");
-  return `<p class="eyebrow">Voortgang</p><h1>Alle 58 leerdoelen</h1>${grouped}`;
+  return `<p class="eyebrow">Voortgang</p><h1>Alle 58 leerdoelen</h1>${examCards}${grouped}`;
 }
 
 function renderCoach() {
@@ -368,7 +492,7 @@ function renderCoach() {
 }
 
 function bindEvents() {
-  document.querySelectorAll("[data-route]").forEach((button) => button.addEventListener("click", () => { location.hash = `#/${button.dataset.route}`; }));
+  document.querySelectorAll("[data-route]").forEach((button) => button.addEventListener("click", () => { saveState(); location.hash = `#/${button.dataset.route}`; }));
   document.querySelectorAll("[data-level]").forEach((button) => button.addEventListener("click", () => {
     document.querySelectorAll("[data-level]").forEach((item) => item.setAttribute("aria-pressed", "false"));
     button.setAttribute("aria-pressed", "true"); const start = document.querySelector("#start"); start.disabled = false; start.dataset.level = button.dataset.level;
@@ -378,7 +502,23 @@ function bindEvents() {
   document.querySelector("#answer")?.addEventListener("input", (event) => saveDraft(activity().question.id, event.target.value, false));
   document.querySelector("#answer")?.addEventListener("keydown", (event) => { if (event.key === "Enter") checkCurrentAnswer(); });
   document.querySelector("#check-answer")?.addEventListener("click", checkCurrentAnswer);
-  document.querySelector("#next-activity")?.addEventListener("click", () => { state.feedback = null; saveState(); render(); });
+  document.querySelector("#next-activity")?.addEventListener("click", () => {
+    const examId = state.feedback?.phase === "exam" ? state.feedback?.exam : null;
+    const session = examId ? state.exams?.[examId] : null;
+    if (session && !session.submitted_at && session.current_index < session.question_ids.length - 1) session.current_index += 1;
+    state.feedback = null; saveState(); render();
+  });
+  document.querySelector("#start-exam")?.addEventListener("click", (event) => {
+    const examId = event.currentTarget.dataset.exam;
+    try { startExam(state, questions, examId); saveState(); location.hash = "#/leren"; render(); }
+    catch (error) { alert(error.message); }
+  });
+  document.querySelector("#submit-exam")?.addEventListener("click", (event) => {
+    const examId = event.currentTarget.dataset.exam;
+    if (!confirm(`Proefexamen ${examId} inleveren? Je hebt 30 antwoorden opgeslagen. Daarna zie je de uitslag en kun je niets meer wijzigen.`)) return;
+    try { submitExam(state, questions, examId); state.feedback = null; saveState(); location.hash = "#/vandaag"; render(); }
+    catch (error) { alert(error.message); }
+  });
   document.querySelector("#open-import")?.addEventListener("click", () => document.querySelector("#import-file").click());
   document.querySelector("#import-file")?.addEventListener("change", importFile);
   document.querySelector("#export-json")?.addEventListener("click", exportJson);
@@ -390,15 +530,24 @@ function saveDraft(questionId, value, rerender) { state.drafts[questionId] = val
 function checkCurrentAnswer() {
   const current = activity(); if (!current) return;
   const { question, phase } = current; const result = scoreAnswer(question, state.drafts[question.id]);
-  if (result.value === null) { state.feedback = { questionId: question.id, phase, correct: false, text: "Vul eerst een antwoord in.", empty: true }; render(); return; }
+  if (result.value === null) { state.feedback = { questionId: question.id, phase, exam: current.exam ?? null, correct: false, text: "Vul eerst een antwoord in.", empty: true }; render(); return; }
   state.attempts.push({ question_id: question.id, objective: question.objective_codes[0], objective_codes: question.objective_codes, domain: question.domain, kind: question.kind, correct: result.correct, answer: result.value, at: new Date().toISOString(), independent: question.step !== "guided", hints: [] });
   if (phase === "diagnostic") state.diagnosticIndex += 1;
   else if (phase !== "exam") updateMastery(question, result.correct);
+  const examSession = phase === "exam" && current.exam ? state.exams?.[current.exam] : null;
+  if (examSession && !examSession.submitted_at) {
+    const nowMs = Date.now();
+    const seconds = examTickQid === question.id && examTickStart ? Math.max(0, Math.round((examTickCarryMs + nowMs - examTickStart) / 1000)) : 0;
+    examSession.answers[question.id] = { answer: result.value, at: new Date().toISOString(), seconds };
+    examSession.elapsed_seconds = (examSession.elapsed_seconds ?? 0) + seconds;
+    examTickQid = null; examTickCarryMs = 0; examTickStart = 0;
+  }
   const hiddenResult = ["diagnostic", "exam"].includes(phase);
   const incorrectCount = state.attempts.filter((attempt) => attempt.objective === question.objective_codes[0] && !attempt.correct).length;
   state.feedback = {
     questionId: question.id,
     phase,
+    exam: current.exam ?? null,
     correct: hiddenResult ? null : result.correct,
     text: hiddenResult
       ? phase === "exam" ? "Antwoord opgeslagen. De uitslag volgt na het proefexamen." : "Je krijgt de uitslag na de laatste nulmetingsvraag."
@@ -434,4 +583,10 @@ function csvCell(value) {
 function download(filename, body, type) { const url = URL.createObjectURL(new Blob([body], { type })); const link = document.createElement("a"); link.href = url; link.download = filename; link.click(); URL.revokeObjectURL(url); }
 
 addEventListener("hashchange", render);
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") {
+    if (examTimerId && examTickStart) { examTickCarryMs += Math.max(0, Date.now() - examTickStart); examTickStart = Date.now(); }
+    try { saveState(); } catch { /* opslag vol of onbeschikbaar: antwoord blijft in het geheugen */ }
+  } else examTickStart = Date.now();
+});
 render();

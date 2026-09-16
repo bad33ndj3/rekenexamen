@@ -111,3 +111,164 @@ const nineOfNineExport = {
 };
 assert.equal(importState(nineOfNineExport, migrationBank).diagnosticIndex, 40, "9/9 oude nulmeting migreert naar afgerond");
 console.log("core: import, scoring and deterministic activity selection pass");
+
+// --- Proefexamen-sessies A/B: start → hervat na reload → inleveren (5/6-grens en gate) ---
+import { EXAM_SIZE, examQuestionIds, formatExamClock, startExam, submitExam } from "./core.mjs";
+
+const examCodes = {
+  G: ["G1", "G2", "G3", "G4", "G5", "G7"],
+  R: ["R3", "R5", "R6", "R10", "R11", "R13"],
+  V: ["V1", "V2", "V3", "V4", "V5", "V6"],
+  P: ["P1", "P2", "P3", "P4", "P5", "P7"],
+  K: ["K2", "K4", "K6", "K9", "K10", "K13"],
+};
+const examBank = [
+  { id: "G1-N3-001", domain: "G", objective_codes: ["G1"], level: 3, kind: "practice", type: "number", answer: 10, tolerance: 0 },
+  { id: "R1-N3-001", domain: "R", objective_codes: ["R1"], level: 3, kind: "practice", type: "number", answer: 5, tolerance: 0 },
+  { id: "G1-REV-001", domain: "G", objective_codes: ["G1"], level: 3, kind: "review", type: "number", answer: 11, tolerance: 0 },
+  ...["A", "B"].flatMap((exam) => Object.entries(examCodes).flatMap(([domain, codes]) => codes.map((code, index) => ({
+    id: `EX-${exam}-${domain}-${index + 1}-${code}`, exam, domain, objective_codes: [code], level: 3, kind: "exam",
+    type: "number", answer: 100 + index, tolerance: 0,
+  })))),
+];
+const freshExamState = () => ({
+  learner: { id: "exam-learner", target_level: 3 }, attempts: [], diagnosticIndex: 0,
+  selectedAnswer: null, feedback: null, mastery: [], exams: { A: null, B: null },
+});
+const masteredExamState = () => ({
+  ...freshExamState(),
+  attempts: [
+    { question_id: "G1-N3-001", objective: "G1", domain: "G", kind: "practice", correct: true, answer: 10, at: "2026-09-16T18:00:00Z", independent: true, hints: [] },
+    { question_id: "R1-N3-001", objective: "R1", domain: "R", kind: "practice", correct: true, answer: 5, at: "2026-09-16T18:01:00Z", independent: true, hints: [] },
+  ],
+  mastery: [
+    { objective_code: "G1", state: "toetsklaar", next_review_at: null },
+    { objective_code: "R1", state: "beheerst", next_review_at: null },
+  ],
+});
+
+// Gate: zonder toetsklare oefendoelen geen examenstart, wel oefening.
+assert.equal(nextActivity(freshExamState(), examBank).phase, "practice", "gate dicht: eerst oefenen, geen examen");
+assert.throws(() => startExam(freshExamState(), examBank, "A"), /toetsklaar of beheerst/, "gate dicht: starten gooit");
+
+// Gate open: A wordt als startbare sessie aangeboden.
+const offer = nextActivity(masteredExamState(), examBank);
+assert.equal(offer.phase, "exam", "gate open: examenfase");
+assert.equal(offer.exam, "A", "eerst examen A");
+assert.equal(offer.total, 30, "sessie telt 30 vragen");
+assert.equal(offer.index, 0, "sessie start bij vraag 1");
+assert.equal(offer.startable, true, "sessie nog niet gestart");
+
+// Start bouwt een vaste G→R→V→P→K-volgorde; B start pas na inleveren A.
+const examState = masteredExamState();
+const sessionA = startExam(examState, examBank, "A", new Date("2026-09-16T19:00:00+02:00"));
+assert.equal(sessionA.question_ids.length, EXAM_SIZE, "sessie A heeft 30 vragen");
+assert.deepEqual(sessionA.question_ids.map((id) => id.split("-")[2]), [...Array(6).fill("G"), ...Array(6).fill("R"), ...Array(6).fill("V"), ...Array(6).fill("P"), ...Array(6).fill("K")], "domeinblokken G→R→V→P→K, 6 per domein");
+assert.deepEqual(sessionA.question_ids, examQuestionIds("A", examBank), "volgorde is deterministisch");
+assert.deepEqual(startExam(masteredExamState(), examBank, "A").question_ids, sessionA.question_ids, "herhaalde start geeft dezelfde volgorde");
+assert.throws(() => startExam(examState, examBank, "A"), /al gestart/, "dubbel starten gooit");
+assert.throws(() => startExam(examState, examBank, "B"), /na het inleveren van proefexamen A/, "B pas na inleveren A");
+
+// Eén beantwoorde vraag, daarna reload via export/import: hervatten bij vraag 2.
+const firstId = sessionA.question_ids[0];
+const firstQuestion = examBank.find((question) => question.id === firstId);
+sessionA.answers[firstId] = { answer: firstQuestion.answer, at: "2026-09-16T19:01:00+02:00", seconds: 42 };
+sessionA.elapsed_seconds = 42;
+sessionA.current_index = 1;
+const idsBeforeReload = [...sessionA.question_ids];
+const reloaded = importState(JSON.parse(JSON.stringify({
+  schema_version: 1, learner: examState.learner, attempts: examState.attempts,
+  diagnosticIndex: 0, mastery: examState.mastery, exams: examState.exams,
+})), examBank);
+assert.deepEqual(reloaded.exams.A.question_ids, idsBeforeReload, "vaste volgorde muteert nooit, ook niet na reload");
+assert.equal(reloaded.exams.A.elapsed_seconds, 42, "opgetelde tijd overleeft reload");
+const resumed = nextActivity(reloaded, examBank);
+assert.equal(resumed.phase, "exam", "open sessie krijgt prio");
+assert.equal(resumed.exam, "A", "hervat sessie A");
+assert.equal(resumed.index, 1, "hervat via current_index bij vraag 2");
+assert.equal(resumed.id, sessionA.question_ids[1], "hervat bij de tweede vraag");
+assert.equal(resumed.total, 30, "totaal blijft 30");
+
+// Herstel en hertoets wachten zolang de sessie openstaat.
+const blockedRecovery = {
+  ...reloaded,
+  attempts: [...reloaded.attempts, { question_id: "G1-N3-001", objective: "G1", domain: "G", kind: "practice", correct: false, answer: 0, at: "2026-09-16T19:02:00Z", independent: true, hints: [] }],
+};
+assert.equal(nextActivity(blockedRecovery, examBank).phase, "exam", "open sessie blokkeert herstel");
+const blockedReview = {
+  ...reloaded,
+  mastery: [{ objective_code: "G1", state: "toetsklaar", next_review_at: "2026-09-16" }, { objective_code: "R1", state: "beheerst", next_review_at: null }],
+};
+assert.equal(nextActivity(blockedReview, examBank, new Date("2026-09-16T12:00:00Z")).phase, "exam", "open sessie blokkeert hertoets");
+
+// Foute examenpogingen tellen niet als herstelsignaal.
+const examMiss = {
+  ...masteredExamState(),
+  attempts: [...masteredExamState().attempts, { question_id: "EX-A-G-1-G1", objective: "G1", domain: "G", kind: "exam", correct: false, answer: 0, at: "2026-09-16T19:03:00Z", independent: true, hints: [] }],
+};
+const afterMiss = nextActivity(examMiss, examBank);
+assert.equal(afterMiss.phase, "exam", "examenfout leidt niet naar herstel");
+assert.equal(afterMiss.exam, "A", "examenfout blokkeert de sessiestart niet");
+
+// Inleveren A met 5/6 per domein: 25/30 = 83%, elk domein 83% → gehaald.
+for (const [position, id] of sessionA.question_ids.entries()) {
+  const question = examBank.find((item) => item.id === id);
+  const wrong = position % 6 === 5;
+  sessionA.answers[id] = { answer: wrong ? question.answer + 999 : question.answer, at: "2026-09-16T19:05:00+02:00", seconds: 30 };
+}
+sessionA.elapsed_seconds = 42 + 29 * 30;
+sessionA.current_index = 29;
+const resultA = submitExam(examState, examBank, "A", new Date("2026-09-16T20:30:00+02:00"));
+assert.equal(resultA.total_pct, 83, "25 van 30 is 83%");
+assert.deepEqual(resultA.per_domain, { G: 83, R: 83, V: 83, P: 83, K: 83 }, "5 van 6 per domein is 83%");
+assert.equal(resultA.passed, true, "80%+ en elk domein 70%+ is gehaald");
+assert.equal(typeof resultA.submitted_at, "string", "uitslag draagt een inlevermoment");
+assert.throws(() => submitExam(examState, examBank, "A"), /al ingeleverd/, "uitslag is immutabel na inleveren");
+
+// Na inleveren A biedt de flow B aan; B met 4/6 op K zakt op de domeinnorm.
+const offerB = nextActivity(examState, examBank);
+assert.equal(offerB.phase, "exam", "na A volgt B");
+assert.equal(offerB.exam, "B", "tweede sessie is B");
+const sessionB = startExam(examState, examBank, "B", new Date("2026-09-17T19:00:00+02:00"));
+for (const [position, id] of sessionB.question_ids.entries()) {
+  const question = examBank.find((item) => item.id === id);
+  const domain = id.split("-")[2];
+  const wrong = domain === "K" ? position % 6 >= 4 : position % 6 === 5;
+  sessionB.answers[id] = { answer: wrong ? question.answer + 999 : question.answer, at: "2026-09-17T19:05:00+02:00", seconds: 30 };
+}
+sessionB.current_index = 29;
+const resultB = submitExam(examState, examBank, "B", new Date("2026-09-17T20:30:00+02:00"));
+assert.equal(resultB.total_pct, 80, "24 van 30 is precies 80%");
+assert.equal(resultB.per_domain.K, 67, "4 van 6 is 67% en haalt de 70%-norm niet");
+assert.equal(resultB.passed, false, "totaal 80% met één domein onder 70% zakt");
+
+// Importvalidatie: v1 zonder exams migreert, corruptie gooit (geen stille reparatie).
+assert.deepEqual(
+  importState({ schema_version: 1, learner: { id: "oud", target_level: 3 }, attempts: [], diagnosticIndex: 0, mastery: [] }, examBank).exams,
+  { A: null, B: null },
+  "v1 zonder exams migreert naar {A:null,B:null}",
+);
+const roundTrip = importState(JSON.parse(JSON.stringify({
+  schema_version: 1, learner: examState.learner, attempts: [], diagnosticIndex: 0, mastery: [], exams: examState.exams,
+})), examBank);
+assert.equal(roundTrip.exams.A.result.passed, true, "ingeleverde uitslag A overleeft export/import");
+assert.equal(roundTrip.exams.B.result.passed, false, "ingeleverde uitslag B overleeft export/import");
+const shortSession = structuredClone(sessionB);
+delete shortSession.answers[shortSession.question_ids[29]];
+assert.throws(
+  () => importState({ schema_version: 1, learner: examState.learner, attempts: [], diagnosticIndex: 0, mastery: [], exams: { A: shortSession, B: null } }, examBank),
+  /30 antwoorden/,
+  "ingeleverde sessie zonder 30 antwoorden is corrupt",
+);
+const unknownSession = structuredClone({ ...sessionA, submitted_at: null, result: null });
+unknownSession.question_ids = [...unknownSession.question_ids.slice(0, 29), "EX-A-XX-onbekend"];
+assert.throws(
+  () => importState({ schema_version: 1, learner: examState.learner, attempts: [], diagnosticIndex: 0, mastery: [], exams: { A: unknownSession, B: null } }, examBank),
+  /Onbekende vraag in import: EX-A-XX-onbekend/,
+  "onbekende question_id gooit",
+);
+
+assert.equal(formatExamClock(0), "0:00", "klok start op 0:00");
+assert.equal(formatExamClock(65), "1:05", "klok toont mm:ss");
+assert.equal(formatExamClock(5400), "90:00", "richttijd is 90:00");
+console.log("exam-sessies: start, hervat, blokkade, inleveren, 5/6-grens, gate en importvalidatie pass");
