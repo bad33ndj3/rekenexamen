@@ -80,4 +80,34 @@ assert.equal(nextActivity(afterFirstExam, questions), null, "na het enige test-e
 
 const retryState = { ...state, attempts: [...state.attempts, { question_id: "K10-N3-002", objective: "K10", domain: "K", correct: false }] };
 assert.equal(nextActivity(retryState, questions).question.id, "K10-N3-002", "uitgeputte fout blijft herstel aanbieden");
+
+// Expliciete 1/9-case voor de migratie uit core.mjs:55-57: één oude poging is onvoltooid.
+const legacyBank = Array.from({ length: 9 }, (_, index) => ({
+  id: `OLD-${index + 1}`, domain: "G", objective_codes: ["G1"], level: 3,
+  kind: "legacy-diagnostic", type: "number", answer: 1, tolerance: 0,
+}));
+const freshDiagnostics = Array.from({ length: 40 }, (_, index) => ({
+  id: `DIAG-G-${index + 1}-G1`, domain: "G", objective_codes: ["G1"], level: 3,
+  kind: "diagnostic", type: "number", answer: 1, tolerance: 0,
+}));
+const migrationBank = [...legacyBank, ...freshDiagnostics];
+const oneOfNineExport = {
+  schema_version: 1,
+  learner: { id: "partial", target_level: 3 },
+  attempts: [{ question_id: "OLD-1", objective: "G1", domain: "G", correct: true, answer: 1, at: "2026-09-16T15:51:41.100Z", independent: true, hints: [] }],
+  diagnosticIndex: 1,
+};
+const oneOfNine = importState(oneOfNineExport, migrationBank);
+assert.equal(oneOfNine.attempts.length, 1, "1/9 oude pogingen blijven 1 poging");
+assert.equal(oneOfNine.diagnosticIndex, 1, "1/9 oude nulmeting blijft onvoltooid (geen migratie naar 40)");
+assert.equal(nextActivity(oneOfNine, migrationBank).phase, "diagnostic", "1/9 oude nulmeting hervat bij de nulmeting");
+assert.equal(nextActivity(oneOfNine, migrationBank).question.id, "DIAG-G-2-G1", "1/9 oude nulmeting gaat verder bij de tweede nulmetingsvraag");
+
+// Volledige 9/9-case migreert wel naar afgerond.
+const nineOfNineExport = {
+  ...oneOfNineExport,
+  attempts: legacyBank.map((question) => ({ question_id: question.id, objective: "G1", domain: "G", correct: true, answer: 1, at: "2026-09-16T15:51:41.100Z", independent: true, hints: [] })),
+  diagnosticIndex: 9,
+};
+assert.equal(importState(nineOfNineExport, migrationBank).diagnosticIndex, 40, "9/9 oude nulmeting migreert naar afgerond");
 console.log("core: import, scoring and deterministic activity selection pass");

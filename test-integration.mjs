@@ -38,8 +38,43 @@ assert.equal(nextActivity(freshLevel4, questions).question.id, "TEST-DIAG-0-B1",
 
 const partialLegacySource = { ...source, attempts: source.attempts.slice(0, 1), diagnosticIndex: 1 };
 const partialLegacy = importState(partialLegacySource, questions);
-assert.equal(partialLegacy.diagnosticIndex, 1, "gedeeltelijke oude nulmeting mag niet als afgerond migreren");
+// Expliciete 1/9-case (core.mjs:55-57): één oude poging + index 1 is onvoltooid.
+const legacyDiagnosticIds = new Set(legacy.filter((question) => question.kind === "legacy-diagnostic").map((question) => question.id));
+assert.equal(legacyDiagnosticIds.size, 9, "oude bank moet 9 legacy-diagnostic vragen hebben");
+assert.equal(partialLegacySource.attempts.length, 1, "partiële bron heeft 1 van de 9 oude pogingen");
+assert(partialLegacySource.attempts.every((attempt) => legacyDiagnosticIds.has(attempt.question_id)), "partiële poging is een oude nulmetingsvraag (1/9)");
+assert.equal(partialLegacy.diagnosticIndex, 1, "gedeeltelijke oude nulmeting (1/9) mag niet als afgerond migreren");
 assert.equal(nextActivity(partialLegacy, questions).phase, "diagnostic");
+assert.equal(nextActivity(partialLegacy, questions).question.kind, "diagnostic", "1/9 hervat bij de nulmeting");
+
+// Target 4 kiest aantoonbaar DIAG4-* (nulmeting) uit *-N4-001-inhoud (app.js:13-26 blueprint + level4ByCode).
+const level4 = JSON.parse(await readFile(new URL("level4.json", import.meta.url), "utf8"));
+const level4Practice = level4.questions.map((question) => ({
+  ...question, domain: question.objective_code[0], objective_codes: [question.objective_code],
+  level: 4, kind: "practice", step: "independent",
+}));
+const diagnosticBlueprint = {
+  G: ["B1", "B2", "B4", "B5", "G1", "G2", "G3", "G5"],
+  R: ["R1", "R3", "R5", "R6", "R9", "R10", "R11", "R13"],
+  V: ["B6", "V1", "V2", "V3", "V4", "V5", "V6", "V7"],
+  P: ["P1", "P2", "P3", "P4", "P5", "P6", "P7", "P8"],
+  K: ["K1", "K2", "K4", "K5", "K6", "K9", "K10", "K13"],
+};
+const level4ByCode = new Map(level4Practice.map((question) => [question.objective_codes[0], question]));
+const level4Diagnostics = Object.entries(diagnosticBlueprint).flatMap(([domain, codes]) => codes.map((code, index) => ({
+  ...level4ByCode.get(code), id: `DIAG4-${domain}-${index + 1}-${code}`, domain, kind: "diagnostic",
+})));
+assert.equal(level4Diagnostics.length, 40, "niveau-4-nulmeting heeft 40 DIAG4-vragen");
+assert(level4Diagnostics.every((question) => question.id.startsWith("DIAG4-")), "niveau-4-nulmeting gebruikt DIAG4-* ids");
+assert(level4Practice.every((question) => question.id.endsWith("-N4-001")), "niveau-4-vragen gebruiken *-N4-001 ids");
+assert(level4Diagnostics.every((question) => question.prompt === level4ByCode.get(question.objective_codes[0]).prompt), "DIAG4-vraag hergebruikt *-N4-001-inhoud per doel");
+const realLevel4Bank = [...legacy, ...level4Diagnostics, ...learning, ...level4Practice];
+const freshRealLevel4 = { learner: { id: "new-l4", target_level: 4 }, attempts: [], diagnosticIndex: 0, mastery: [] };
+const firstRealLevel4 = nextActivity(freshRealLevel4, realLevel4Bank);
+assert.equal(firstRealLevel4.phase, "diagnostic", "niveau 4 start met de nulmeting");
+assert.equal(firstRealLevel4.question.id, "DIAG4-G-1-B1", "nulmeting bij target 4 start met DIAG4-G-1-B1");
+assert(level4Practice.some((question) => question.id === "B1-N4-001"), "niveau-4-bank bevat B1-N4-001");
+assert(level4Practice.some((question) => question.id === "K10-N4-001"), "niveau-4-bank bevat K10-N4-001");
 
 const app = await readFile(new URL("app.js", import.meta.url), "utf8");
 for (const route of ["vandaag", "leren", "voortgang", "begeleider"]) assert(app.includes(route), `route ontbreekt: ${route}`);

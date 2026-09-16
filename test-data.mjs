@@ -31,4 +31,6 @@ assert.deepEqual(curriculum.objectives.map((objective) => objective.code), expec
 assert(curriculum.objectives.every((objective) => objective.questions.length === 3), "Elk doel moet drie basisvragen hebben");
 assert.deepEqual(level4.questions.map((question) => question.objective_code), expectedCodes, "Niveau 4 dekt niet alle doelen");
 assert.equal(new Set(level4.questions.map((question) => question.id)).size, 58, "Dubbele niveau-4-id");
+assert(level4.questions.every((question) => question.id === `${question.objective_code}-N4-001`), "Elke niveau-4-vraag moet *-N4-001 heten (code + -N4-001)");
+assert(level4.questions.every((question) => question.id.endsWith("-N4-001")), "Niveau-4-ids moeten op -N4-001 eindigen");
 console.log(`${questions.length} oude vragen, 58 doelen, 174 basisvragen en 58 niveau-4-vragen gecontroleerd.`);
