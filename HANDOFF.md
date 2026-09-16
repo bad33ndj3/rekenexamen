@@ -16,7 +16,7 @@ Mobile-first lokale leerapp die een volwassene met weggezakte vmbo-rekenbasis na
 
 ## Belangrijkste gebruikersbestand
 
-`/Users/casper.spruit@energyzero.nl/Downloads/rekenen-voortgang.json`
+`<downloads>/rekenen-voortgang.json`
 
 Dit is schema v1, target level 4, oude nulmeting afgerond, laatste fout K10 (gemiddelde: antwoord 24 in plaats van 8). Correct gedrag na import: direct `K10-guided` als herstelles tonen.
 
@@ -100,7 +100,7 @@ python3 -m http.server 8000
 Playwright wrapper:
 
 ```sh
-/Users/casper.spruit@energyzero.nl/.codex/skills/playwright/scripts/playwright_cli.sh --session rekenen open http://127.0.0.1:8000
+~/.codex/skills/playwright/scripts/playwright_cli.sh --session rekenen open http://127.0.0.1:8000
 ```
 
 Gebruik `snapshot`, klik via verse refs, `resize 390 844` en controleer console. De oude favicon-404 is opgelost met een data-favicon.
