@@ -1,6 +1,14 @@
 # Handoff - rekenleerapp
 
-Laatste update: 2026-09-16 18:43 Europe/Amsterdam
+Laatste update: 2026-09-16 19:30 Europe/Amsterdam
+
+## Voortgang deze sessie (git `main`: 7315b33 → e0e3e83 → 18de3ed → f1d9a8d)
+
+- Git repo geïnitialiseerd; `.playwright-cli/` genegeerd.
+- Punt 3 klaar (`e0e3e83`): 1/9-nulmeting blijft onvoltooid, target 4 kiest `DIAG4-*` + `*-N4-001` — alleen testbestanden, `task test` groen.
+- Punt 4 klaar (`18de3ed`): `visualFor()` rendert generiek alle 18 `visual`-descriptors (K4/K7/K11/K12, R11–R15); bestaande vaste visuals behouden; 320px-veilig.
+- Punt 5 klaar (`f1d9a8d`): proefexamens A/B als echte sessies — 2×30 (6/domein G→R→V→P→K), hervatbaar in localStorage, optellende 90:00-richttijd zonder lockout, `Vraag i van 30` + 5×6-strip, inleveren pas op vraag 30, uitslag `totaal ≥80% + elk domein ≥70%` (praktisch ≥5/6). EX-vraagbank hergebruikt (60 afgeschermde vragen blijven bekend tekort).
+- Browsertest 19:20 groen (5/5, 0 console-fouten, geen favicon-404): K10-importflow intact, gate correct dicht bij import, volledige examenflow vanuit examenklare seed, K4-chart zonder overflow op 390px. Screenshot: `.playwright-cli/page-2026-09-16T17-19-28-458Z.png`. Twee nuances genoteerd (zie hieronder).
 
 ## Doel
 
@@ -62,10 +70,10 @@ Screenshot: `.playwright-cli/page-2026-09-16T16-19-33-480Z.png`.
    Laatste resultaat: `task test` volledig geslaagd om 18:43.
 
 2. Browsertest na de eerste integratie was groen voor import K10, uitleg, reload-opslag, feedback, vervolgvraag, 58-doelenpagina en JSON/CSV. Na de laatste niveau-4-cataloguswijziging is een reload groen gecontroleerd; herimport exact bestand is via `test-integration.mjs` groen.
-3. Nog toevoegen aan tests: gedeeltelijke oude nulmeting (1/9) blijft onvoltooid en target 4 kiest aantoonbaar `DIAG4-*` plus `*-N4-001`.
-4. `visualFor()` rendert vaste visuals/tabellen voor K2/K3/K6/K13 en R5/R6/R7/R9/R10. Render de overige `visual` descriptors uit `level4.json`, met name K4/K7/K11/K12 en R11-R15.
-5. Maak proefexamens echte sessies: 30 vragen per A/B, voortgang, 90-minutenrichttijd, uitslag na einde, totaal >=80% en ieder domein >=70%. Antwoorden tonen nu terecht geen directe uitslag en wijzigen mastery niet, maar sessiescore/timer ontbreekt nog.
-6. Mastery uit `LEERPLAN.md` is nog niet volledig: vereist uiteindelijk 5 nieuwe vragen, zelfstandig meerstapsbewijs, +3 dagen en +14 dagen. Huidige 3 basisvragen plus 1 niveau-4-vraag per doel ondersteunen `toetsklaar`, nog niet definitief `beheerst`.
+3. ✅ Klaar (`e0e3e83`): gedeeltelijke oude nulmeting (1/9) blijft onvoltooid en target 4 kiest aantoonbaar `DIAG4-*` plus `*-N4-001`.
+4. ✅ Klaar (`18de3ed`): alle 18 `visual` descriptors uit `level4.json` renderen generiek (incl. K4/K7/K11/K12 en R11-R15); vaste fallbacks K2/K3/K6/K13 en R5/R6/R7/R9/R10 behouden.
+5. ✅ Klaar (`f1d9a8d`, browser-geverifieerd 19:20): proefexamens zijn echte A/B-sessies (30 vragen, voortgang, 90-minutenrichttijd, uitslag na inleveren, totaal >=80% en ieder domein >=70%). Twee kleine nuances open: (a) gate-dicht = afwezigheid van A/B-kaarten i.p.v. zichtbare vergrendelde kaarten; (b) examen-`feedback` persisteert niet over reload (`feedback:null` bij import) — na reload opnieuw "Sla antwoord op" i.p.v. "Volgende", her-beantwoorden is idempotent maar telt elapsed dubbel. B-inleveren end-to-end viel buiten de browserchecks.
+6. Mastery uit `LEERPLAN.md` is nog niet volledig: vereist uiteindelijk 5 nieuwe vragen, zelfstandig meerstapsbewijs, +3 dagen en +14 dagen. Huidige 3 basisvragen plus 1 niveau-4-vraag per doel ondersteunen `toetsklaar`, nog niet definitief `beheerst`. Advies ligt klaar: `toetsklaar` bevriezen, bankgroei +2/doel (`review2` + `multistep`), `review_stage` +3d/+14d, begeleider-review 0–4; geen `scoreAnswer`-magie.
 7. R7 niveau 3 is tekstueel nog algemeen; level 4 is expliciet parallel aan een zijvlak.
 
 ## Starten en browsertesten
