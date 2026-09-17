@@ -2,9 +2,9 @@ version: "3"
 
 tasks:
   serve:
-    desc: Start de app op http://localhost:8000
+    desc: Start de app op http://localhost:4173
     cmds:
-      - python3 -m http.server 8000
+      - python3 -m http.server 4173
 
   test:
     desc: Run alle snelle controles
@@ -32,7 +32,7 @@ tasks:
   browser:
     desc: Open de draaiende app in de Playwright-browser
     cmds:
-      - ~/.codex/skills/playwright/scripts/playwright_cli.sh --session rekenen open http://127.0.0.1:8000
+      - ~/.codex/skills/playwright/scripts/playwright_cli.sh --session rekenen open http://127.0.0.1:4173
 
   browser:mobile:
     desc: Zet de geopende Playwright-browser op mobiel formaat

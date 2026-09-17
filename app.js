@@ -93,6 +93,8 @@ function renderToday() {
   const results = ["A", "B"].map((examId) => examResultCard(examId, state.exams?.[examId])).join("");
   const locked = ["A", "B"].map((examId) => examLockedCard(examId)).join("");
   if (!next) {
+    const failed = ["A", "B"].filter((examId) => state.exams?.[examId]?.result?.passed === false);
+    if (failed.length) return `${results}${locked}<p class="eyebrow">Vandaag</p><h1>Nog niet klaar</h1><div class="card"><h2>Oefen de zwakke onderdelen opnieuw</h2><p>Proefexamen ${failed.join(" en ")} is nog niet gehaald. De leerdoelen uit de zwakke domeinen staan opnieuw klaar om te oefenen.</p><button data-route="voortgang">Bekijk voortgang</button></div>`;
     const pending = state.mastery.filter((item) => item.next_review_at).sort((a, b) => a.next_review_at.localeCompare(b.next_review_at))[0];
     return pending
       ? `${results}${locked}<p class="eyebrow">Vandaag</p><h1>Goed gewerkt</h1><div class="card"><h2>Volgende hertoets</h2><p>Je volgende korte herhaling staat gepland voor ${new Date(`${pending.next_review_at}T12:00:00`).toLocaleDateString("nl-NL")}.</p><button data-route="voortgang">Bekijk voortgang</button></div>`
@@ -234,6 +236,27 @@ function examResultView(examId, session) {
 
 function stopExamTimer() { if (examTimerId) { clearInterval(examTimerId); examTimerId = null; } }
 
+function takeExamElapsed(questionId) {
+  if (!examTickStart || examTickQid !== questionId) return 0;
+  const seconds = Math.max(0, Math.floor((examTickCarryMs + Date.now() - examTickStart) / 1000));
+  examTickQid = null; examTickCarryMs = 0; examTickStart = 0;
+  return seconds;
+}
+
+function flushExamTimer() {
+  const active = getActiveExamState();
+  if (!active) return;
+  active.session.elapsed_seconds = (active.session.elapsed_seconds ?? 0) + takeExamElapsed(active.questionId);
+}
+
+function getActiveExamState() {
+  for (const examId of ["A", "B"]) {
+    const session = state.exams?.[examId];
+    if (session && !session.submitted_at) return { session, questionId: session.question_ids[session.current_index] };
+  }
+  return null;
+}
+
 function startExamTimer(session) {
   stopExamTimer();
   const now = Date.now();
@@ -282,12 +305,19 @@ function visualFor(question) {
     if (generic) return generic;
   }
   const code = question.objective_codes[0];
-  if (code === "K2") return `<table class="data-table"><caption>Gegevens</caption><thead><tr><th>Categorie</th><th>Waarde</th></tr></thead><tbody><tr><td>Januari / A / maandag</td><td>12 / 24 / €14</td></tr><tr><td>Februari / B / dinsdag</td><td>18 / 31 / €19</td></tr><tr><td>Maart / woensdag</td><td>15 / €17</td></tr></tbody></table>`;
+  if (question.id === "K2-guided") return `<table class="data-table"><caption>Verkochte boeken</caption><thead><tr><th>Maand</th><th>Boeken</th></tr></thead><tbody><tr><td>Januari</td><td>12</td></tr><tr><td>Februari</td><td>18</td></tr><tr><td>Maart</td><td>15</td></tr></tbody></table>`;
+  if (question.id === "K2-independent") return `<table class="data-table"><caption>Reizigers per bus</caption><thead><tr><th>Bus</th><th>Reizigers</th></tr></thead><tbody><tr><td>A</td><td>24</td></tr><tr><td>B</td><td>31</td></tr></tbody></table>`;
+  if (question.id === "K2-review") return `<table class="data-table"><caption>Omzet per dag</caption><thead><tr><th>Dag</th><th>Omzet</th></tr></thead><tbody><tr><td>Maandag</td><td>€14</td></tr><tr><td>Dinsdag</td><td>€19</td></tr><tr><td>Woensdag</td><td>€17</td></tr></tbody></table>`;
   if (code === "K3") return `<table class="data-table"><caption>Frequenties</caption><thead><tr><th>Groep</th><th>Aantal</th></tr></thead><tbody><tr><td>Rood</td><td>4</td></tr><tr><td>Blauw</td><td>7</td></tr><tr><td>Groen</td><td>3</td></tr></tbody></table>`;
-  if (code === "K6") return `<figure><svg class="question-figure" viewBox="0 0 320 190" role="img" aria-label="Grafiek met assen van nul tot veertig en een balk tot veertig"><path d="M45 20V160H300" fill="none" stroke="#17212b" stroke-width="2"/><g stroke="#d9ded8"><path d="M45 125H300M45 90H300M45 55H300M45 20H300"/></g><g fill="#56616b" font-size="12"><text x="18" y="164">0</text><text x="12" y="129">10</text><text x="12" y="94">20</text><text x="12" y="59">30</text><text x="12" y="24">40</text></g><rect x="105" y="20" width="70" height="140" fill="#176b68"/><path d="M205 97L270 69" fill="none" stroke="#b86b16" stroke-width="4"/><circle cx="205" cy="97" r="5" fill="#b86b16"/><circle cx="270" cy="69" r="5" fill="#b86b16"/></svg><figcaption>Lees altijd eerst de schaal van de verticale as.</figcaption></figure>`;
+  if (question.id === "K6-guided") return visualBarChart({ title: "Waarde aflezen", labels: ["balk"], values: [40], y_label: "waarde" });
+  if (question.id === "K6-independent") return visualLineChart({ title: "Punt tussen schaalstappen", labels: ["30", "punt", "40"], values: [30, 35, 40], y_label: "waarde" });
+  if (question.id === "K6-review") return visualLineChart({ title: "Waarde per maand", labels: ["januari", "februari"], values: [18, 26], y_label: "waarde" });
   if (code === "K13") return `<figure><svg class="question-figure" viewBox="0 0 320 180" role="img" aria-label="Misleidende staafgrafiek waarvan de verticale as pas bij tachtig begint"><path d="M50 20V145H295" fill="none" stroke="#17212b" stroke-width="2"/><g fill="#56616b" font-size="12"><text x="18" y="149">80</text><text x="18" y="94">90</text><text x="12" y="29">100</text></g><rect x="90" y="90" width="65" height="55" fill="#176b68"/><rect x="195" y="35" width="65" height="110" fill="#b86b16"/></svg><figcaption>De as begint bij 80, niet bij 0.</figcaption></figure>`;
+  if (question.id === "R5-independent") return visualNet({ solid: "driehoekig prisma", faces: ["driehoek", "driehoek", "rechthoek", "rechthoek", "rechthoek"] });
   if (code === "R5") return `<figure><svg class="question-figure" viewBox="0 0 320 210" role="img" aria-label="Uitslag van een kubus met zes vierkante vlakken"><g fill="#e9f3f1" stroke="#176b68" stroke-width="3"><rect x="110" y="10" width="50" height="50"/><rect x="60" y="60" width="50" height="50"/><rect x="110" y="60" width="50" height="50"/><rect x="160" y="60" width="50" height="50"/><rect x="210" y="60" width="50" height="50"/><rect x="110" y="110" width="50" height="50"/></g></svg><figcaption>Een uitslag vouw je langs de randen tot een ruimtelijke vorm.</figcaption></figure>`;
+  if (question.id === "R6-review") return visualBlockHeights({ grid: [[1, 3, 2]], view: "front" });
   if (["R6", "R9", "R10"].includes(code)) return `<figure><svg class="question-figure" viewBox="0 0 320 190" role="img" aria-label="Balk met lengte acht, breedte drie en hoogte vijf"><path d="M65 70L200 70L255 35L120 35Z M65 70V145L200 145V70 M200 145L255 110V35" fill="#e9f3f1" fill-opacity=".7" stroke="#176b68" stroke-width="3"/><g fill="#17212b" font-size="14"><text x="125" y="165">8 cm</text><text x="225" y="135">3 cm</text><text x="38" y="112">5 cm</text></g></svg><figcaption>Let op welk aanzicht of welke schaal de vraag gebruikt.</figcaption></figure>`;
+  if (question.id === "R7-independent") return visualCrossSection({ solid: "kubus", plane: "verticaal en diagonaal door het midden" });
   if (code === "R7") return `<figure><svg class="question-figure" viewBox="0 0 320 180" role="img" aria-label="Cilinder die horizontaal wordt doorgesneden, met een cirkel als doorsnede"><ellipse cx="115" cy="35" rx="55" ry="18" fill="#e9f3f1" stroke="#176b68" stroke-width="3"/><path d="M60 35V135M170 35V135" stroke="#176b68" stroke-width="3"/><ellipse cx="115" cy="135" rx="55" ry="18" fill="#e9f3f1" stroke="#176b68" stroke-width="3"/><path d="M50 85H180" stroke="#b86b16" stroke-width="4" stroke-dasharray="7 5"/></svg><figcaption>De stippellijn geeft het snijvlak aan.</figcaption></figure>`;
   return "";
 }
@@ -539,7 +569,7 @@ function renderCoach() {
 }
 
 function bindEvents() {
-  document.querySelectorAll("[data-route]").forEach((button) => button.addEventListener("click", () => { saveState(); location.hash = `#/${button.dataset.route}`; }));
+  document.querySelectorAll("[data-route]").forEach((button) => button.addEventListener("click", () => { flushExamTimer(); saveState(); location.hash = `#/${button.dataset.route}`; }));
   document.querySelectorAll("[data-level]").forEach((button) => button.addEventListener("click", () => {
     document.querySelectorAll("[data-level]").forEach((item) => item.setAttribute("aria-pressed", "false"));
     button.setAttribute("aria-pressed", "true"); const start = document.querySelector("#start"); start.disabled = false; start.dataset.level = button.dataset.level;
@@ -565,7 +595,7 @@ function bindEvents() {
   document.querySelector("#submit-exam")?.addEventListener("click", (event) => {
     const examId = event.currentTarget.dataset.exam;
     if (!confirm(`Proefexamen ${examId} inleveren? Je hebt 30 antwoorden opgeslagen. Daarna zie je de uitslag en kun je niets meer wijzigen.`)) return;
-    try { submitExam(state, questions, examId); state.feedback = null; saveState(); location.hash = "#/vandaag"; render(); }
+    try { const result = submitExam(state, questions, examId); if (!result.passed) reopenWeakDomains(result); state.feedback = null; saveState(); location.hash = "#/vandaag"; render(); }
     catch (error) { alert(error.message); }
   });
   document.querySelector("#open-import")?.addEventListener("click", () => document.querySelector("#import-file").click());
@@ -922,10 +952,8 @@ function checkCurrentAnswer() {
   else if (phase !== "exam") updateMastery(question, result.correct);
   const examSession = phase === "exam" && current.exam ? state.exams?.[current.exam] : null;
   if (examSession && !examSession.submitted_at) {
-    const nowMs = Date.now();
-    const seconds = examTickQid === question.id && examTickStart ? Math.max(0, Math.round((examTickCarryMs + nowMs - examTickStart) / 1000)) : 0;
+    const seconds = takeExamElapsed(question.id);
     recordExamAnswer(examSession, question.id, result.value, seconds);
-    examTickQid = null; examTickCarryMs = 0; examTickStart = 0;
   }
   const hiddenResult = ["diagnostic", "exam"].includes(phase);
   const incorrectCount = state.attempts.filter((attempt) => attempt.objective === question.objective_codes[0] && !attempt.correct).length;
@@ -944,9 +972,23 @@ function updateMastery(question, correct) {
   const code = question.objective_codes[0]; let item = state.mastery.find((entry) => entry.objective_code === code);
   if (!item) { item = { objective_code: code, state: "in_opbouw", next_review_at: null }; state.mastery.push(item); }
   if (!correct) { item.state = "in_opbouw"; return; }
-  if (question.kind === "review") { item.state = "toetsklaar"; item.next_review_at = null; return; }
+  if (question.kind === "review") {
+    item.review_passes = (item.review_passes ?? 0) + 1;
+    if (item.review_passes >= 2) { item.state = "toetsklaar"; item.next_review_at = null; return; }
+    item.state = "hertoets_nodig"; const date = new Date(); date.setDate(date.getDate() + 14); item.next_review_at = date.toISOString().slice(0, 10); return;
+  }
   if (state.attempts.some((attempt) => attempt.objective === code && attempt.correct && attempt.independent)) {
     item.state = "hertoets_nodig"; const date = new Date(); date.setDate(date.getDate() + 3); item.next_review_at = date.toISOString().slice(0, 10);
+  }
+}
+function reopenWeakDomains(result) {
+  const today = new Date().toISOString().slice(0, 10);
+  for (const domain of examDomainOrder.filter((code) => (result.per_domain[code] ?? 0) < 70)) {
+    for (const objective of curriculum.objectives.filter((item) => item.domain === domain)) {
+      let mastery = state.mastery.find((item) => item.objective_code === objective.code);
+      if (!mastery) { mastery = { objective_code: objective.code }; state.mastery.push(mastery); }
+      Object.assign(mastery, { state: "hertoets_nodig", next_review_at: today, review_passes: 0 });
+    }
   }
 }
 async function importFile(event) {
@@ -1019,8 +1061,9 @@ requestPersistentStorage();
 addEventListener("hashchange", render);
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "hidden") {
-    if (examTimerId && examTickStart) { examTickCarryMs += Math.max(0, Date.now() - examTickStart); examTickStart = Date.now(); }
+    flushExamTimer();
     try { saveState(); } catch { /* opslag vol of onbeschikbaar: antwoord blijft in het geheugen */ }
-  } else examTickStart = Date.now();
+  } else render();
 });
+addEventListener("pagehide", () => { flushExamTimer(); try { saveState(); } catch { /* best effort */ } });
 render();

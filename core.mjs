@@ -237,6 +237,10 @@ function validateExamSession(examId, session, questionById) {
     if (seen.has(id)) throw new TypeError(`Proefexamen ${examId} in import is corrupt: dubbele vraag ${id}.`);
     seen.add(id);
   }
+  const expected = examQuestionIds(examId, [...questionById.values()]);
+  if (expected.length !== EXAM_SIZE || ids.some((id, index) => id !== expected[index])) {
+    throw new TypeError(`Proefexamen ${examId} in import is corrupt: verkeerde vragen of volgorde.`);
+  }
   if (!Number.isInteger(session.current_index) || session.current_index < 0 || session.current_index >= EXAM_SIZE) {
     throw new TypeError(`Proefexamen ${examId} in import is corrupt: ongeldige positie.`);
   }
@@ -261,6 +265,10 @@ function validateExamSession(examId, session, questionById) {
     if (Object.keys(answers).length !== EXAM_SIZE) throw new TypeError(`Proefexamen ${examId} is ingeleverd zonder 30 antwoorden en is corrupt.`);
     if (!isObject(result) || typeof result.total_pct !== "number" || !isObject(result.per_domain) || typeof result.passed !== "boolean") {
       throw new TypeError(`Proefexamen ${examId} in import is corrupt: uitslag ontbreekt.`);
+    }
+    const actual = gradeExam(ids, answers, [...questionById.values()]);
+    if (result.total_pct !== actual.total_pct || result.passed !== actual.passed || EXAM_DOMAINS.some((domain) => result.per_domain[domain] !== actual.per_domain[domain])) {
+      throw new TypeError(`Proefexamen ${examId} in import is corrupt: uitslag klopt niet met de antwoorden.`);
     }
   } else if (result != null) {
     throw new TypeError(`Proefexamen ${examId} in import is corrupt: uitslag zonder inlevering.`);
@@ -339,7 +347,8 @@ function dueReview(state, questions, now) {
   return state.mastery
     .filter((item) => item.next_review_at && item.next_review_at <= date)
     .sort((a, b) => a.next_review_at.localeCompare(b.next_review_at) || a.objective_code.localeCompare(b.objective_code))
-    .map((item) => ({ objective: item.objective_code, question: unusedQuestion(questions, state.attempts, item.objective_code, ["review", "practice"]) }))
+    .map((item) => ({ objective: item.objective_code, question: unusedQuestion(questions, state.attempts, item.objective_code, ["review", "practice"])
+      ?? questions.find((question) => question.kind === "review" && question.objective_codes?.includes(item.objective_code)) }))
     .find((activity) => activity.question);
 }
 

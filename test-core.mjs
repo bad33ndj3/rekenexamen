@@ -254,7 +254,7 @@ const roundTrip = importState(JSON.parse(JSON.stringify({
 })), examBank);
 assert.equal(roundTrip.exams.A.result.passed, true, "ingeleverde uitslag A overleeft export/import");
 assert.equal(roundTrip.exams.B.result.passed, false, "ingeleverde uitslag B overleeft export/import");
-const shortSession = structuredClone(sessionB);
+const shortSession = structuredClone(sessionA);
 delete shortSession.answers[shortSession.question_ids[29]];
 assert.throws(
   () => importState({ schema_version: 1, learner: examState.learner, attempts: [], diagnosticIndex: 0, mastery: [], exams: { A: shortSession, B: null } }, examBank),
@@ -267,6 +267,19 @@ assert.throws(
   () => importState({ schema_version: 1, learner: examState.learner, attempts: [], diagnosticIndex: 0, mastery: [], exams: { A: unknownSession, B: null } }, examBank),
   /Onbekende vraag in import: EX-A-XX-onbekend/,
   "onbekende question_id gooit",
+);
+const wrongExam = structuredClone({ ...sessionB, submitted_at: null, result: null });
+assert.throws(
+  () => importState({ schema_version: 1, learner: examState.learner, attempts: [], diagnosticIndex: 0, mastery: [], exams: { A: wrongExam, B: null } }, examBank),
+  /verkeerde vragen of volgorde/,
+  "A-sessie met B-vragen wordt geweigerd",
+);
+const forgedResult = structuredClone(sessionA);
+forgedResult.result.total_pct = 0;
+assert.throws(
+  () => importState({ schema_version: 1, learner: examState.learner, attempts: [], diagnosticIndex: 0, mastery: [], exams: { A: forgedResult, B: null } }, examBank),
+  /uitslag klopt niet/,
+  "opgeslagen uitslag moet overeenkomen met de antwoorden",
 );
 
 assert.equal(formatExamClock(0), "0:00", "klok start op 0:00");
